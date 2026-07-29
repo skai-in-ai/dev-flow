@@ -15,6 +15,7 @@
 |:---|:---|
 | 理解用途與目前邊界 | `docs/overview.md` |
 | 修改整體流程或目錄 | `docs/architecture.md` |
+| 建立、解析或更新討論 spec | `docs/contracts/spec.md` |
 | 建立或驗證 handoff | `docs/contracts/handoff.md` |
 | 修改 tier、風險規則或模型 | `docs/modules/routing.md` |
 | 修改 retry、review 或完成條件 | `docs/modules/orchestration.md` |
@@ -27,6 +28,7 @@
 - Routing：`src/routing.ts`、`src/models.ts`、`src/classifier-prompt.ts`
 - Orchestration：`src/orchestrator.ts`、`src/test-runner.ts`
 - Pi adapter：`src/adapters/pi/pi-process-adapter.ts`
+- Spec contract：`src/spec.ts`
 - Mobile entrypoint：`extensions/orchestrate.ts`
 
 ## 驗證
@@ -39,6 +41,12 @@ npm test
 
 ```bash
 npm run orchestrate -- --handoff /absolute/path/handoff.json
+```
+
+也可由已核准 spec 啟動：
+
+```bash
+npm run orchestrate -- --spec /absolute/path/spec.md
 ```
 
 ## 維護原則

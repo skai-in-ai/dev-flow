@@ -23,10 +23,14 @@ Pi project extension：
 Remote Pi app 連上 `pi.lifestay.tw` 的 `mac-dev` session 後，在輸入框使用：
 
 ```text
-/orchestrate /Users/skai.wu/side/<repo> <需求描述>
+先與 agent 討論需求
+把結論整理成 approved spec，先不要實作
+/dev
 ```
 
-例如：
+Agent 會自行呼叫 `save_agent_spec`，把結論寫到 `<repo>/.agent/specs/`。每個 Pi session 分別記住最近一次 spec，因此手機不必輸入完整路徑，確認 spec 後用無參數 `/dev` 即可開始。
+
+舊的直接入口仍可用：
 
 ```text
 /orchestrate /Users/skai.wu/side/example 修正 README 的安裝指令
@@ -39,6 +43,14 @@ Remote Pi app 連上 `pi.lifestay.tw` 的 `mac-dev` session 後，在輸入框�
 ```
 
 Extension 會立即通知 handoff 路徑，再以背景 child process 執行 orchestrator，進度透過 Pi notification 顯示。
+
+## Spec 條件
+
+- repo 必須位於 `/Users/skai.wu/side` 且本身為 Git repo。
+- `/dev` 只接受 `approved` 且沒有未決事項的 spec。
+- 測試要求必須是原始 shell command，例如 `npm test`，不能寫成「在 repo 執行 npm test」。
+- 成功後 spec 變為 `ready_for_main`；三輪未通過則變為 `needs_clarification`。
+- Session pointer 寫在 `~/.pi/agent-orchestrator/sessions/`，不同 session 不互相誤用。
 
 ## Draft handoff 行為
 

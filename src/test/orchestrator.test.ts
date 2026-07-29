@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { excludeLedger, formatTests, Orchestrator } from "../orchestrator.js";
+import { excludeLedger, formatTests, meaningfulStatus, Orchestrator } from "../orchestrator.js";
 import type { AgentRunner, AgentRunRequest, AgentRunResult } from "../agents/contracts.js";
 import type { CommandRunner, TestResult } from "../test-runner.js";
 
@@ -48,4 +48,17 @@ test("stores the ledger exclusion through git's worktree-aware path", async () =
   await excludeLedger(worktree);
   const repeated = await readFile(resolve(worktree, excludePath), "utf8");
   assert.equal(repeated.split("\n").filter((line) => line === ".orchestrator/").length, 1);
+});
+
+test("an untracked approved spec neither blocks preflight nor enters review diff", async () => {
+  const path = await repo();
+  await mkdir(join(path, ".agent/specs"), { recursive: true });
+  await writeFile(join(path, ".agent/specs/task.md"), "---\nstatus: approved\n---\n");
+  const agents = new FakeAgents([{ summary: "impl" }, { summary: "VERDICT: pass", verdict: "pass" }, { summary: "VERDICT: pass", verdict: "pass" }]);
+  const outcome = await new Orchestrator({ agents, tests: new PassingTests() }).run(handoff(path), () => {});
+  assert.equal(outcome.status, "ready_for_main");
+  const reviewer = agents.calls.find((call) => call.role === "reviewer");
+  assert.equal(reviewer?.artifacts.diff.includes("task.md"), false);
+  const status = await exec("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: path });
+  assert.deepEqual(meaningfulStatus(status.stdout), []);
 });

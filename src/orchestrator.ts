@@ -19,7 +19,8 @@ export class Orchestrator {
   async run(handoff: Handoff, onProgress: (line: string) => void = console.log): Promise<RunOutcome> {
     const repo = resolve(handoff.repo); const runId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`;
     await excludeLedger(repo);
-    if ((await git(repo, ["status", "--porcelain"])).trim()) throw new Error("Target repo working tree must be clean before orchestration");
+    const status = await git(repo, ["status", "--porcelain", "--untracked-files=all"]);
+    if (meaningfulStatus(status).length) throw new Error("Target repo working tree must be clean before orchestration");
     const root = join(repo, ".orchestrator", "runs", runId); await mkdir(root, { recursive: true });
     const baseline = await git(repo, ["rev-parse", "HEAD"]).catch(() => "unborn");
     const initial = await hybridRoute(handoff, this.deps.config, this.deps.classifier);
@@ -63,12 +64,17 @@ export class Orchestrator {
 async function ledger(root: string, name: string, value: unknown): Promise<void> { await writeFile(join(root, name), `${JSON.stringify(value, null, 2)}\n`); }
 async function git(cwd: string, args: string[]): Promise<string> { const { stdout } = await execFileAsync("git", args, { cwd }); return stdout; }
 async function workingDiff(repo: string): Promise<string> {
-  const tracked = await git(repo, ["diff", "--", ".", ":(exclude).orchestrator"]);
-  const untracked = (await git(repo, ["ls-files", "--others", "--exclude-standard", "--", ".", ":(exclude).orchestrator"])).trim().split("\n").filter(Boolean);
+  const tracked = await git(repo, ["diff", "--", ".", ":(exclude).orchestrator/**", ":(exclude).agent/specs/**"]);
+  const untracked = (await git(repo, ["ls-files", "--others", "--exclude-standard", "--", ".", ":(exclude).orchestrator/**", ":(exclude).agent/specs/**"])).trim().split("\n").filter(Boolean);
   const parts = [tracked];
   for (const file of untracked) parts.push(await git(repo, ["diff", "--no-index", "/dev/null", file]).catch((error: { stdout?: string }) => error.stdout ?? ""));
   return parts.filter(Boolean).join("\n");
 }
+function isSpecStatusLine(line: string): boolean {
+  const path = line.slice(3).split(" -> ").at(-1)?.replace(/^"|"$/g, "") ?? "";
+  return path === ".agent/specs" || path.startsWith(".agent/specs/");
+}
+export function meaningfulStatus(status: string): string[] { return status.split("\n").filter(Boolean).filter((line) => !isSpecStatusLine(line)); }
 export async function excludeLedger(repo: string): Promise<void> {
   const gitPath = (await git(repo, ["rev-parse", "--git-path", "info/exclude"])).trim();
   const path = resolve(repo, gitPath);
