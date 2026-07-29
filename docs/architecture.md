@@ -1,0 +1,73 @@
+# 系統架構
+
+本文件忠實描述目前程式分層、呼叫關係與資料保存方式。
+
+## 分層
+
+| 層級 | 檔案 | 責任 |
+|:---|:---|:---|
+| Entry | `src/cli.ts` | 載入 handoff、建立 Pi adapter/classifier、啟動流程 |
+| Mobile entry | `extensions/orchestrate.ts` | 註冊 Pi command、建立 draft、非同步啟動 CLI |
+| Domain | `src/handoff.ts`、`src/agents/contracts.ts` | 輸入與 agent request/result 型別 |
+| Routing | `src/routing.ts`、`src/models.ts`、`src/classifier-prompt.ts` | deterministic floor、model classifier 合併、模型選擇 |
+| Workflow | `src/orchestrator.ts` | round、升級、測試、review 與完成條件 |
+| Adapter | `src/adapters/pi/pi-process-adapter.ts` | Pi child process、工具權限、JSONL 與 verdict 解析 |
+| Execution | `src/test-runner.ts` | 依序執行 deterministic shell commands |
+
+`src/workflows/review-loop.ts` 與 `src/policies/completion-policy.ts` 保留一套純狀態機及其測試；目前 CLI 的主流程由 `src/orchestrator.ts` 直接控制，沒有呼叫該狀態機。
+
+## 執行序列
+
+```mermaid
+sequenceDiagram
+    participant U as User / Remote Pi
+    participant E as Pi Extension or CLI
+    participant R as Router (Terra Low)
+    participant I as Implementer
+    participant T as Test Runner
+    participant V as Reviewer
+    participant S as Sol Final Reviewer
+
+    U->>E: handoff
+    E->>R: scope + risk notes
+    R-->>E: tier candidate
+    E->>I: isolated implementation request
+    I-->>E: working-tree changes
+    E->>R: actual diff
+    R-->>E: same or higher tier
+    E->>T: commands
+    T-->>E: pass/fail + output
+    E->>V: handoff + diff + tests + repo rules
+    V-->>E: pass/fail/escalate
+    opt Tier 1 or Tier 2
+      E->>S: same immutable artifacts
+      S-->>E: pass/fail/escalate
+    end
+    E-->>U: ready_for_main / needs_human
+```
+
+## Isolation 邊界
+
+- 每次 agent invocation 建立不同 `sessionDir`。
+- Router 使用 `--no-tools`。
+- Reviewer 與 final reviewer 只開啟 `read,grep,find,ls`。
+- Implementer 開啟 `read,write,edit,bash,grep,find,ls`。
+- 所有 child process 使用 `--no-extensions`，避免載入 Remote Pi 或專案 extension。
+- Reviewer 只接收 handoff、最終 diff、測試輸出與根目錄 `CLAUDE.md`，不接收 implementer conversation。
+
+## Ledger
+
+```text
+<target-repo>/.orchestrator/
+├── router-<timestamp>/
+└── runs/<run-id>/
+    ├── run.json
+    ├── round-<n>-implementer.json
+    ├── round-<n>-tests.json
+    ├── round-<n>-reviewer.json
+    ├── round-<n>-final.json       # Tier 1/2 才有
+    ├── summary.json
+    └── summary.md
+```
+
+Ledger 透過 `git rev-parse --git-path info/exclude` 加入 `.orchestrator/`，可處理一般 repo 與 linked worktree。
