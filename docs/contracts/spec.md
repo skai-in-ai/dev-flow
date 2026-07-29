@@ -31,4 +31,6 @@ draft → approved → ready_for_main
                  ↘ needs_clarification
 ```
 
-Agent 透過 `save_agent_spec` 寫入或覆寫 spec，並為當前 Pi session 保存 pointer。`/dev` 優先使用該 pointer；若 Pi cwd 本身就是目標 Git repo，也可回退至該 repo 最新的 approved spec。它不會跨 session 使用全域最近 spec。
+Agent 透過 `save_agent_spec` 寫入或覆寫 spec，並為當前 Pi session 保存 pointer。`/dev-flow` 會讓 agent 根據同一個 session 的討論決定是否建立 approved spec；只要資訊不足，就以 draft / `needs_clarification` 停下並提出問題。只有 `/dev-flow` 當次建立的 approved spec 會自動啟動流程。
+
+`/dev` 優先使用該 pointer；若 Pi cwd 本身就是目標 Git repo，也可回退至該 repo 最新的 approved spec。它不會跨 session 使用全域最近 spec，也不會讀取聊天內容。

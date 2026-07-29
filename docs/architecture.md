@@ -7,7 +7,7 @@
 | 層級 | 檔案 | 責任 |
 |:---|:---|:---|
 | Entry | `src/cli.ts` | 載入 handoff、建立 Pi adapter/classifier、啟動流程 |
-| Mobile entry | `extensions/orchestrate.ts` | 註冊 spec tool、`/dev` 與 `/orchestrate`，非同步啟動 CLI |
+| Mobile entry | `extensions/orchestrate.ts` | 註冊 spec tool、`/dev-flow`、`/dev` 與 `/orchestrate`，非同步啟動 CLI |
 | Domain | `src/spec.ts`、`src/handoff.ts`、`src/agents/contracts.ts` | Spec lifecycle、輸入與 agent request/result 型別 |
 | Routing | `src/routing.ts`、`src/models.ts`、`src/classifier-prompt.ts` | deterministic floor、model classifier 合併、模型選擇 |
 | Workflow | `src/orchestrator.ts` | round、升級、測試、review 與完成條件 |
@@ -28,7 +28,12 @@ sequenceDiagram
     participant V as Reviewer
     participant S as Sol Final Reviewer
 
-    U->>E: discussion → approved spec → /dev
+    U->>E: discussion → /dev-flow
+    alt discussion complete
+      E->>E: save approved spec → auto-start CLI
+    else information missing
+      E-->>U: save draft/needs_clarification + concrete questions
+    end
     E->>R: scope + risk notes
     R-->>E: tier candidate
     E->>I: isolated implementation request

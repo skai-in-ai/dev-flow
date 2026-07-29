@@ -24,11 +24,12 @@ Remote Pi app 連上 `pi.lifestay.tw` 的 `mac-dev` session 後，在輸入框�
 
 ```text
 先與 agent 討論需求
-把結論整理成 approved spec，先不要實作
-/dev
+/dev-flow
 ```
 
-Agent 會自行呼叫 `save_agent_spec`，把結論寫到 `<repo>/.agent/specs/`。每個 Pi session 分別記住最近一次 spec，因此手機不必輸入完整路徑，確認 spec 後用無參數 `/dev` 即可開始。
+`/dev-flow` 會讓同一個 session 的 agent 讀取目前討論並整理 spec。若目標 repo、範圍、驗收、測試或決策仍不完整，agent 會保存可保存的 draft / `needs_clarification` 並提出最少必要問題，不會啟動開發；補充後必須再輸入一次 `/dev-flow`，普通對話中的 spec 儲存不會自動開始。若資訊完整，agent 會呼叫 `save_agent_spec` 寫入 approved spec，extension 立即自動啟動隔離的 dev → review 流程。
+
+每個 Pi session 分別記住最近一次 spec，因此手機不必輸入完整路徑。`/dev` 保留為相容入口：已有 approved spec 時可直接重跑它，不會重新分析討論內容。
 
 舊的直接入口仍可用：
 
@@ -48,6 +49,7 @@ Extension 會立即通知 handoff 路徑，再以背景 child process 執行 orc
 
 - repo 必須位於 `/Users/skai.wu/side` 且本身為 Git repo。
 - `/dev` 只接受 `approved` 且沒有未決事項的 spec。
+- `/dev-flow` 僅在本次命令建立的 approved spec 才會自動開始；draft 或 `needs_clarification` 一律停止在討論 session。
 - 測試要求必須是原始 shell command，例如 `npm test`，不能寫成「在 repo 執行 npm test」。
 - 成功後 spec 變為 `ready_for_main`；三輪未通過則變為 `needs_clarification`。
 - Session pointer 寫在 `~/.pi/agent-orchestrator/sessions/`，不同 session 不互相誤用。

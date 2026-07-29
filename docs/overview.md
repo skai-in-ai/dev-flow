@@ -9,9 +9,10 @@ Agent Orchestrator 將主討論 session 的結論保存為結構化 spec，再�
 ## 目前流程
 
 ```text
-討論完成
-  → approved spec（.agent/specs/）
-  → /dev
+討論
+  → /dev-flow
+  → 完整：approved spec（.agent/specs/）→ 自動啟動
+  → 不完整：draft / needs_clarification → 繼續討論後再 /dev-flow
   → handoff
   → deterministic floor + Terra Low risk classifier
   → isolated implementer
@@ -35,12 +36,15 @@ npm run orchestrate -- --handoff /absolute/path/handoff.json
 ### Pi / Remote Pi
 
 ```text
+/dev-flow
 /dev
 /orchestrate /absolute/path/handoff.json
 /orchestrate /Users/skai.wu/side/example-repo 實作明確的小型需求
 ```
 
-主要使用方式是在同一個 Pi session 討論需求，結論確定後說「把結論整理成 approved spec，先不要實作」。Agent 會呼叫 `save_agent_spec`，將文件寫進目標 repo 的 `.agent/specs/`，並記住該 session 的 spec。確認內容後只需輸入 `/dev`，不必再貼 repo 或檔案路徑。
+主要使用方式是在同一個 Pi session 討論需求後輸入 `/dev-flow`。Agent 會根據本 session 整理 spec：資訊完整時寫入 approved spec 並自動開始流程；資訊不足時保存 draft 或 `needs_clarification`（repo 已知時）並直接提出缺少的問題，不會開始開發。補充後必須再次輸入 `/dev-flow`；一般對話後直接儲存 approved spec 不會沿用先前命令自動啟動。不必再貼 repo 或檔案路徑。
+
+`/dev` 是相容入口，供已有 approved spec 的 session 直接啟動，不會重新彙整討論。
 
 第二種形式會建立 draft handoff，並從目標 repo 的 `package.json` 自動加入既有 `test`、`build` scripts。
 
