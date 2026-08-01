@@ -18,7 +18,7 @@ const handoff = (path: string) => ({ repo: path, objective: "normal change", sco
 test("review escalation upgrades checks without re-running implementation or consuming a round", async () => {
   const path = await repo(); const agents = new FakeAgents([{ summary: "implemented" }, { summary: "VERDICT: escalate", verdict: "escalate" }, { summary: "VERDICT: pass", verdict: "pass" }, { summary: "VERDICT: pass", verdict: "pass" }]);
   const outcome = await new Orchestrator({ agents, tests: new PassingTests() }).run(handoff(path), () => {});
-  assert.equal(outcome.status, "ready_for_main"); assert.equal(outcome.rounds, 1); assert.equal(agents.calls.filter((x) => x.role === "implementer").length, 1); assert.equal(agents.calls[2]?.model.model, "openai-codex/gpt-5.6-terra");
+  assert.equal(outcome.status, "ready_for_main"); assert.equal(outcome.rounds, 1); assert.equal(agents.calls.filter((x) => x.role === "implementer").length, 1); assert.deepEqual(agents.calls[2]?.model, { model: "openai-codex/gpt-5.6-terra", reasoning: "medium" });
 });
 test("three review failures require a human", async () => {
   const path = await repo(); const agents = new FakeAgents([{ summary: "impl" }, { summary: "bad", verdict: "fail" }, { summary: "impl" }, { summary: "bad", verdict: "fail" }, { summary: "impl" }, { summary: "bad", verdict: "fail" }]);
@@ -34,6 +34,36 @@ test("makes missing deterministic tests visible in progress and review artifacts
   assert.equal(progress.some((line) => line.includes("no deterministic commands configured")), true);
   assert.equal(agents.calls.find((call) => call.role === "reviewer")?.artifacts.tests, "NO DETERMINISTIC TESTS CONFIGURED");
   assert.equal(formatTests([]), "NO DETERMINISTIC TESTS CONFIGURED");
+});
+
+test("tier 1 finishes after the isolated Luna review without a fixed Sol gate", async () => {
+  const path = await repo();
+  const agents = new FakeAgents([{ summary: "impl" }, { summary: "VERDICT: pass", verdict: "pass" }]);
+  const outcome = await new Orchestrator({ agents, tests: new PassingTests() }).run(handoff(path), () => {});
+  assert.equal(outcome.status, "ready_for_main");
+  assert.deepEqual(agents.calls.map((call) => call.role), ["implementer", "reviewer"]);
+  assert.deepEqual(agents.calls[0]?.model, { model: "openai-codex/gpt-5.6-luna", reasoning: "high" });
+  assert.deepEqual(agents.calls[1]?.model, { model: "openai-codex/gpt-5.6-luna", reasoning: "high" });
+});
+
+test("a failed tier 2 first round retries implementation with Terra", async () => {
+  const path = await repo();
+  const highRisk = { ...handoff(path), objective: "add database migration" };
+  const agents = new FakeAgents([
+    { summary: "Luna impl" }, { summary: "bad", verdict: "fail" },
+    { summary: "Terra impl" }, { summary: "pass", verdict: "pass" }, { summary: "pass", verdict: "pass" },
+  ]);
+  const outcome = await new Orchestrator({ agents, tests: new PassingTests() }).run(highRisk, () => {});
+  assert.equal(outcome.status, "ready_for_main");
+  const implementers = agents.calls.filter((call) => call.role === "implementer");
+  assert.deepEqual(implementers.map((call) => call.model), [
+    { model: "openai-codex/gpt-5.6-luna", reasoning: "high" },
+    { model: "openai-codex/gpt-5.6-terra", reasoning: "medium" },
+  ]);
+  assert.deepEqual(agents.calls.filter((call) => call.role === "reviewer").map((call) => call.model), [
+    { model: "openai-codex/gpt-5.6-terra", reasoning: "medium" },
+    { model: "openai-codex/gpt-5.6-terra", reasoning: "medium" },
+  ]);
 });
 
 test("stores the ledger exclusion through git's worktree-aware path", async () => {

@@ -29,7 +29,7 @@ export class Orchestrator {
     while (round <= 3) {
       onProgress(`Round ${round}/3 · Tier ${effective.tier}`);
       if (implementationNeeded) {
-        const result = await this.deps.agents.run({ role: "implementer", taskId: runId, cwd: repo, sessionDir: join(root, `round-${round}-implementer`), model: modelFor(effective.tier, "implementer"), prompt: `Implement this handoff:\n${JSON.stringify(handoff, null, 2)}${lastFindings.length ? `\nFix these findings:\n${lastFindings.join("\n")}` : ""}`, artifacts: { handoff: JSON.stringify(handoff, null, 2), baseline, findings: lastFindings.join("\n") } });
+        const result = await this.deps.agents.run({ role: "implementer", taskId: runId, cwd: repo, sessionDir: join(root, `round-${round}-implementer`), model: modelFor(effective.tier, "implementer", round), prompt: `Implement this handoff:\n${JSON.stringify(handoff, null, 2)}${lastFindings.length ? `\nFix these findings:\n${lastFindings.join("\n")}` : ""}`, artifacts: { handoff: JSON.stringify(handoff, null, 2), baseline, findings: lastFindings.join("\n") } });
         await ledger(root, `round-${round}-implementer.json`, result); onProgress(`Implementer: ${result.summary.slice(0, 160)}`);
         if (await git(repo, ["rev-parse", "HEAD"]).then((head) => head.trim()) !== baseline.trim()) throw new Error("Implementer changed HEAD; commit/push is forbidden");
       }
@@ -50,7 +50,7 @@ export class Orchestrator {
       if (verdict === "escalate" && effective.tier < 2) { effective = { ...effective, tier: (effective.tier + 1) as Tier, reasons: [...effective.reasons, "reviewer escalation"] }; implementationNeeded = false; onProgress(`Reviewer escalated to Tier ${effective.tier}; re-reviewing without reimplementation.`); continue; }
       if (verdict === "escalate") { lastFindings = [...(review.findings ?? []), review.summary]; if (round === 3) return this.finish(root, "needs_human", runId, effective.tier, round, effective); round++; implementationNeeded = true; continue; }
       if (verdict === "fail") { lastFindings = [...(review.findings ?? []), review.summary]; if (round === 3) return this.finish(root, "needs_human", runId, effective.tier, round, effective); round++; implementationNeeded = true; continue; }
-      if (effective.tier > 0) {
+      if (effective.tier === 2) {
         const final = await this.deps.agents.run({ role: "final_reviewer", taskId: runId, cwd: repo, sessionDir: join(root, `round-${round}-final`), model: modelFor(effective.tier, "final_reviewer"), prompt: "Perform the final, read-only release review. Verify requirement coverage and risk.", artifacts });
         await ledger(root, `round-${round}-final.json`, final);
         if ((final.verdict ?? "fail") !== "pass") { lastFindings = [...(final.findings ?? []), final.summary]; if (round === 3) return this.finish(root, "needs_human", runId, effective.tier, round, effective); round++; implementationNeeded = true; continue; }

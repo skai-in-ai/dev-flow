@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { modelFor } from "../models.js";
+import { classifierModel, modelFor } from "../models.js";
 import { deterministicRoute, hybridRoute } from "../routing.js";
 import { validateHandoff } from "../handoff.js";
 
@@ -10,8 +10,13 @@ test("deterministic floor beats a model downgrade", async () => {
   const result = await hybridRoute({ ...base, objective: "add database migration" }, {}, { classify: async () => ({ tier: 0, confidence: 1 }) });
   assert.equal(result.tier, 2);
 });
-test("model and reasoning mapping is fixed", () => {
-  assert.deepEqual(modelFor(1, "implementer"), { model: "openai-codex/gpt-5.6-luna", reasoning: "medium" });
-  assert.deepEqual(modelFor(1, "reviewer"), { model: "openai-codex/gpt-5.6-terra", reasoning: "low" });
+test("model and reasoning mapping is Luna-first", () => {
+  assert.deepEqual(classifierModel(), { model: "openai-codex/gpt-5.6-luna", reasoning: "medium" });
+  assert.deepEqual(modelFor(0, "implementer"), { model: "openai-codex/gpt-5.6-luna", reasoning: "medium" });
+  assert.deepEqual(modelFor(0, "reviewer"), { model: "openai-codex/gpt-5.6-luna", reasoning: "low" });
+  assert.deepEqual(modelFor(1, "implementer"), { model: "openai-codex/gpt-5.6-luna", reasoning: "high" });
+  assert.deepEqual(modelFor(1, "reviewer"), { model: "openai-codex/gpt-5.6-luna", reasoning: "high" });
+  assert.deepEqual(modelFor(2, "implementer", 1), { model: "openai-codex/gpt-5.6-luna", reasoning: "high" });
+  assert.deepEqual(modelFor(2, "implementer", 2), { model: "openai-codex/gpt-5.6-terra", reasoning: "medium" });
   assert.deepEqual(modelFor(2, "final_reviewer"), { model: "openai-codex/gpt-5.6-sol", reasoning: "medium" });
 });

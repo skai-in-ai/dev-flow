@@ -4,7 +4,7 @@ export type ReviewVerdict = "pass" | "fail" | "escalate";
 
 export interface ModelSelection {
   model: string;
-  reasoning: "low" | "medium";
+  reasoning: "low" | "medium" | "high";
 }
 
 export interface AgentRunRequest {

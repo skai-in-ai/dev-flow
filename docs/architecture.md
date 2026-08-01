@@ -22,7 +22,7 @@
 sequenceDiagram
     participant U as User / Remote Pi
     participant E as Pi Extension or CLI
-    participant R as Router (Terra Low)
+    participant R as Router (Luna Medium)
     participant I as Implementer
     participant T as Test Runner
     participant V as Reviewer
@@ -44,7 +44,7 @@ sequenceDiagram
     T-->>E: pass/fail + output
     E->>V: handoff + diff + tests + repo rules
     V-->>E: pass/fail/escalate
-    opt Tier 1 or Tier 2
+    opt Tier 2
       E->>S: same immutable artifacts
       S-->>E: pass/fail/escalate
     end
@@ -70,7 +70,7 @@ sequenceDiagram
     ├── round-<n>-implementer.json
     ├── round-<n>-tests.json
     ├── round-<n>-reviewer.json
-    ├── round-<n>-final.json       # Tier 1/2 才有
+    ├── round-<n>-final.json       # Tier 2 才有
     ├── summary.json
     └── summary.md
 ```

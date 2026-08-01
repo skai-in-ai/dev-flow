@@ -3,7 +3,7 @@ import { loadHandoff } from "./handoff.js";
 import { loadSpec, specToHandoff, updateSpecStatus } from "./spec.js";
 import { Orchestrator } from "./orchestrator.js";
 import { ShellTestRunner } from "./test-runner.js";
-import { modelFor } from "./models.js";
+import { classifierModel } from "./models.js";
 import type { ModelClassifier } from "./routing.js";
 import { renderClassifierPrompt } from "./classifier-prompt.js";
 
@@ -15,7 +15,7 @@ else {
   const handoff = handoffIndex >= 0 ? await loadHandoff(process.argv[handoffIndex + 1]) : specToHandoff(await loadSpec(specPath!));
   const agents = new PiProcessAdapter();
   const classifier: ModelClassifier = { classify: async ({ handoff: routingHandoff, diff }) => {
-    const result = await agents.run({ role: "router", taskId: "routing", cwd: routingHandoff.repo, sessionDir: `${routingHandoff.repo}/.orchestrator/router-${Date.now()}`, model: modelFor(1, "reviewer"), prompt: renderClassifierPrompt(routingHandoff, diff), artifacts: {} });
+    const result = await agents.run({ role: "router", taskId: "routing", cwd: routingHandoff.repo, sessionDir: `${routingHandoff.repo}/.orchestrator/router-${Date.now()}`, model: classifierModel(), prompt: renderClassifierPrompt(routingHandoff, diff), artifacts: {} });
     return parseClassifierResult(result.summary);
   } };
   const result = await new Orchestrator({ agents, tests: new ShellTestRunner(), classifier }).run(handoff);
@@ -27,5 +27,5 @@ else {
 
 export function parseClassifierResult(text: string): Awaited<ReturnType<ModelClassifier["classify"]>> {
   const candidate = text.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1] ?? text.match(/\{[\s\S]*\}/)?.[0];
-  try { return JSON.parse(candidate ?? "") as Awaited<ReturnType<ModelClassifier["classify"]>>; } catch { return { reasons: ["Terra router returned invalid JSON; deterministic floor retained"], riskFlags: [] }; }
+  try { return JSON.parse(candidate ?? "") as Awaited<ReturnType<ModelClassifier["classify"]>>; } catch { return { reasons: ["Luna router returned invalid JSON; deterministic floor retained"], riskFlags: [] }; }
 }

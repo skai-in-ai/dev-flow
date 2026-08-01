@@ -4,7 +4,7 @@
 
 ## 定位
 
-Agent Orchestrator 將主討論 session 的結論保存為結構化 spec，再轉為 handoff；也保留直接接收 handoff 的入口。它先以 deterministic rules 與 Terra Low classifier 決定風險 tier，再分別啟動隔離的 Pi 子程序進行實作、測試與審查。這讓需求脈絡有穩定文件，同時避免 implementer 與 reviewer 共享對話上下文。
+Agent Orchestrator 將主討論 session 的結論保存為結構化 spec，再轉為 handoff；也保留直接接收 handoff 的入口。它先以 deterministic rules 與 Luna Medium classifier 決定風險 tier，再分別啟動隔離的 Pi 子程序進行實作、測試與審查。這讓需求脈絡有穩定文件，同時避免 implementer 與 reviewer 共享對話上下文。
 
 ## 目前流程
 
@@ -14,16 +14,16 @@ Agent Orchestrator 將主討論 session 的結論保存為結構化 spec，再�
   → 完整：approved spec（.agent/specs/）→ 自動啟動
   → 不完整：draft / needs_clarification → 繼續討論後再 /dev-flow
   → handoff
-  → deterministic floor + Terra Low risk classifier
-  → isolated implementer
+  → deterministic floor + Luna Medium risk classifier
+  → Luna-first isolated implementer
   → actual diff reclassification（tier 只能升）
   → deterministic tests
   → isolated reviewer
-  → Tier 1/2 isolated Sol final reviewer
+  → Tier 2 isolated Sol final reviewer
   → ready_for_main 或 needs_human
 ```
 
-最多允許三個失敗 round。單純升級 tier 不算失敗 round，也不會自動重做已完成的 implementation；流程會先用較強 reviewer 重新檢查。
+最多允許三個失敗 round。單純升級 tier 不算失敗 round，也不會自動重做已完成的 implementation；流程會先用較強 reviewer 重新檢查。T1 由 Luna High implementer 與 context-isolated Luna High reviewer 通過後直接 `ready_for_main`。T2 第 1 round 以 Luna High 實作、Terra Medium review、Sol Medium final；任何失敗使下一 round 的 implementer 升級為 Terra Medium。
 
 ## 使用入口
 

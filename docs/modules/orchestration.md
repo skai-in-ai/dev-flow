@@ -21,14 +21,14 @@
 isolated reviewer
   escalate → 升 tier，優先同 round 重審
   fail → 下一 round 回 implementer
-Tier > 0 → isolated Sol final reviewer
+Tier 2 → isolated Sol final reviewer
   pass → ready_for_main
   fail → 下一 round 回 implementer
 ```
 
 ## Round 計數
 
-只有 test/reviewer/final reviewer 的實際失敗才前進到下一 round。最多三 round；第三 round 未通過回傳 `needs_human`。單純 tier escalation 不增加 round。
+只有 test/reviewer/final reviewer 的實際失敗才前進到下一 round。最多三 round；第三 round 未通過回傳 `needs_human`。單純 tier escalation 不增加 round。T2 在第 1 round 失敗後，後續 round 的 implementer 由 Luna High 升為 Terra Medium。
 
 ## 測試來源
 
