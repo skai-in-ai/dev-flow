@@ -14,6 +14,8 @@
 
 一個 cycle 是一次完整的 implement → tests → reviewer →（tier 2）final。
 
+這張圖回答：**什麼條件下分岔、什麼會消耗 cycle、各種終局怎麼來的**。每個角色實際收到哪些 artifact、以及隔離邊界，見 `docs/architecture.md` 的執行序列圖。
+
 ```mermaid
 flowchart TD
     Start([handoff / spec]) --> Clean{working tree 乾淨？}

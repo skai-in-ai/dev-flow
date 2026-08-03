@@ -75,3 +75,4 @@ bin/dev-flow --max-tier 2
 - 輪次上限只允許出現在 `src/policies/completion-policy.ts`；`orchestrator.ts` 的失敗分支一律呼叫 `nextCycle`。
 - `applyBudget` 不得原地改寫 `request.artifacts`；ledger 必須保留未截斷的原件。
 - 任何提前結束的路徑都必須經過 `finish()`；runtime exception 也要先落地成 `failed` summary 再往外拋。
+- 兩張流程圖各有分工，不要合併也不要互相複製：改分支條件或終局動 `docs/modules/orchestration.md` 的 flowchart，改 artifact 或角色動 `docs/architecture.md` 的 sequenceDiagram。

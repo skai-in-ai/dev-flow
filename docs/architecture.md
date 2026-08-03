@@ -18,6 +18,11 @@
 
 ## 執行序列
 
+這張圖回答：**每個角色收到哪些 artifact、以及隔離邊界在哪**。`E` 永遠在中間，agent 之間沒有任何箭頭，這是不可弱化的性質。
+
+分支條件、什麼會消耗 cycle、各種終局怎麼來的，見 `docs/modules/orchestration.md` 的流程圖。改分支動那張，改 artifact 或角色動這張。
+
+
 ```mermaid
 sequenceDiagram
     participant U as User / Remote Pi
@@ -26,7 +31,7 @@ sequenceDiagram
     participant I as Implementer
     participant T as Test Runner
     participant V as Reviewer
-    participant S as Sol Final Reviewer
+    participant S as Sol Final Reviewer（預設不執行）
 
     U->>E: discussion → /dev-flow
     alt discussion complete
@@ -34,6 +39,8 @@ sequenceDiagram
     else information missing
       E-->>U: save draft/needs_clarification + concrete questions
     end
+    E->>T: baseline preflight commands
+    T-->>E: pass/fail（fail 即拒絕啟動，不呼叫任何 agent）
     E->>R: scope + risk notes
     R-->>E: tier candidate
     E->>I: isolated implementation request
@@ -42,13 +49,14 @@ sequenceDiagram
     R-->>E: same or higher tier
     E->>T: commands
     T-->>E: pass/fail + output
-    E->>V: handoff + diff + tests + repo rules
-    V-->>E: pass/fail/escalate
-    opt Tier 2
+    E->>V: handoff + diff + tests + repo rules + decision log
+    V-->>E: pass/fail/escalate/needs_spec
+    opt Tier 2（需 --max-tier 2，預設上限為 1）
       E->>S: same immutable artifacts
-      S-->>E: pass/fail/escalate
+      S-->>E: pass/fail/escalate/needs_spec
     end
-    E-->>U: ready_for_main / needs_human
+    E->>E: 寫出 summary.json / decisions.json / report.md
+    E-->>U: ready_for_main / needs_human / failed
 ```
 
 ## Isolation 邊界
