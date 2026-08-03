@@ -44,7 +44,7 @@ export class PiProcessAdapter implements AgentRunner {
     const events = parseJsonLines(result.stdout);
     const assistant = lastAssistantText(events);
     const review = parseReview(assistant);
-    return { summary: assistant, verdict: review.verdict, findings: review.findings, events, usage: lastUsage(events), sessionMetadata: { sessionDir: request.sessionDir, model: request.model.model, reasoning: request.model.reasoning } };
+    return { summary: assistant, verdict: review.verdict, findings: review.findings, usage: lastUsage(events), sessionMetadata: { sessionDir: request.sessionDir, eventsPath: join(request.sessionDir, "events.jsonl"), model: request.model.model, reasoning: request.model.reasoning } };
   }
 }
 
