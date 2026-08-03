@@ -26,7 +26,9 @@
 ## 模組
 
 - Routing：`src/routing.ts`、`src/models.ts`、`src/classifier-prompt.ts`
-- Orchestration：`src/orchestrator.ts`、`src/test-runner.ts`
+- Orchestration：`src/orchestrator.ts`、`src/test-runner.ts`、`src/policies/completion-policy.ts`、`src/decision-log.ts`
+- Prompt 預算：`src/prompt-budget.ts`
+- dev-flow 入口：`src/dev-flow.ts`、`bin/dev-flow`
 - Pi adapter：`src/adapters/pi/pi-process-adapter.ts`
 - Spec contract：`src/spec.ts`
 - Mobile entrypoint：`extensions/orchestrate.ts`
@@ -49,8 +51,19 @@ npm run orchestrate -- --handoff /absolute/path/handoff.json
 npm run orchestrate -- --spec /absolute/path/spec.md
 ```
 
+日常隨手分派（跑目前 repo `.agent/specs/` 最新一份已定案的 spec）：
+
+```bash
+bin/dev-flow            # 最新一份
+bin/dev-flow spec.md    # 指定
+```
+
+spec 尚未定案（status 非 approved 或仍有未決事項）時不會啟動，改為印出待答問題。
+
 ## 維護原則
 
 - 程式碼行為、tier/model 對照、handoff schema 或部署方式變更時，同步更新對應 `docs/`。
 - Reviewer 與 implementer 不共用 session；不可弱化 read-only reviewer 的工具 allowlist。
 - MVP 停在 `ready_for_main`，不自動 commit 或 push。
+- 輪次上限只允許出現在 `src/policies/completion-policy.ts`；`orchestrator.ts` 的失敗分支一律呼叫 `nextCycle`。
+- `applyBudget` 不得原地改寫 `request.artifacts`；ledger 必須保留未截斷的原件。

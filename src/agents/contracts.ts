@@ -1,6 +1,10 @@
 export type Tier = 0 | 1 | 2;
 export type AgentRole = "implementer" | "reviewer" | "final_reviewer" | "router";
-export type ReviewVerdict = "pass" | "fail" | "escalate";
+/**
+ * `needs_spec` 表示「缺陷不在實作，而在 handoff 沒定義的產品語意」。
+ * 它不是失敗，重試沒有意義，正確動作是帶著具體問題回到討論階段。
+ */
+export type ReviewVerdict = "pass" | "fail" | "escalate" | "needs_spec";
 
 export interface ModelSelection {
   model: string;

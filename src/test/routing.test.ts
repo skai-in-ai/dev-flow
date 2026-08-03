@@ -14,9 +14,19 @@ test("model and reasoning mapping is Luna-first", () => {
   assert.deepEqual(classifierModel(), { model: "openai-codex/gpt-5.6-luna", reasoning: "medium" });
   assert.deepEqual(modelFor(0, "implementer"), { model: "openai-codex/gpt-5.6-luna", reasoning: "medium" });
   assert.deepEqual(modelFor(0, "reviewer"), { model: "openai-codex/gpt-5.6-luna", reasoning: "low" });
-  assert.deepEqual(modelFor(1, "implementer"), { model: "openai-codex/gpt-5.6-luna", reasoning: "high" });
   assert.deepEqual(modelFor(1, "reviewer"), { model: "openai-codex/gpt-5.6-luna", reasoning: "high" });
-  assert.deepEqual(modelFor(2, "implementer", 1), { model: "openai-codex/gpt-5.6-luna", reasoning: "high" });
-  assert.deepEqual(modelFor(2, "implementer", 2), { model: "openai-codex/gpt-5.6-terra", reasoning: "medium" });
+  assert.deepEqual(modelFor(1, "final_reviewer"), { model: "openai-codex/gpt-5.6-sol", reasoning: "low" }, "tier 1 final review must stay on Sol Low");
+  assert.deepEqual(modelFor(2, "reviewer"), { model: "openai-codex/gpt-5.6-terra", reasoning: "medium" });
   assert.deepEqual(modelFor(2, "final_reviewer"), { model: "openai-codex/gpt-5.6-sol", reasoning: "medium" });
+});
+
+test("the implementer ladder follows the cycle, not the tier", () => {
+  // 首次實作用 Medium：handoff 已寫清楚要做什麼，High 的多餘推理正是範圍漂移的來源。
+  // Terra 只在 Luna 連兩次修不好之後才出場。
+  for (const tier of [0, 1, 2] as const) {
+    assert.deepEqual(modelFor(tier, "implementer", 1), { model: "openai-codex/gpt-5.6-luna", reasoning: "medium" });
+    assert.deepEqual(modelFor(tier, "implementer", 2), { model: "openai-codex/gpt-5.6-luna", reasoning: "high" });
+    assert.deepEqual(modelFor(tier, "implementer", 3), { model: "openai-codex/gpt-5.6-luna", reasoning: "high" });
+    assert.deepEqual(modelFor(tier, "implementer", 4), { model: "openai-codex/gpt-5.6-terra", reasoning: "medium" });
+  }
 });

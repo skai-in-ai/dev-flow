@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# 隨手分派入口：跑目前 repo 最新一份已定案的 spec，或指定一份。
+#   dev-flow                 最新一份 .agent/specs/*.md
+#   dev-flow path/to/spec.md 指定
+# spec 尚未定案（status 非 approved 或仍有未決事項）時不會啟動，會印出待答問題。
+set -euo pipefail
+ORCHESTRATOR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+npm --prefix "$ORCHESTRATOR" run --silent build
+exec node "$ORCHESTRATOR/dist/cli.js" "$@"

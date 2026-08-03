@@ -14,7 +14,13 @@ export interface Handoff {
   delivery: { mode: "direct_main"; requireApproval: boolean };
 }
 
-export interface RepoConfig { tests?: string[]; testsByTier?: Partial<Record<Tier, string[]>>; riskPaths?: Record<string, Tier>; }
+export interface RepoConfig {
+  tests?: string[];
+  testsByTier?: Partial<Record<Tier, string[]>>;
+  riskPaths?: Record<string, Tier>;
+  /** 因失敗而重新實作的次數上限；未設定時採 DEFAULT_MAX_FIX_CYCLES。 */
+  maxFixCycles?: number;
+}
 
 export async function loadHandoff(path: string): Promise<Handoff> {
   const parsed: unknown = JSON.parse(await readFile(resolve(path), "utf8"));

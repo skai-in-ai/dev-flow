@@ -37,8 +37,17 @@ test("accepts JSON reviewer verdict aliases and requires a standalone verdict li
   assert.deepEqual(parseReview('{"verdict":"approve","findings":["covered"]}'), { verdict: "pass", findings: ["covered"] });
   assert.deepEqual(parseReview('```json\n{"verdict":"reject","findings":["missing test"]}\n```'), { verdict: "fail", findings: ["missing test"] });
   assert.deepEqual(parseReview('{"verdict":"escalate"}'), { verdict: "escalate", findings: [] });
+  assert.deepEqual(parseReview('{"verdict":"spec_gap"}'), { verdict: "needs_spec", findings: [] });
+  assert.deepEqual(parseReview("VERDICT: needs spec"), { verdict: "needs_spec", findings: [] });
   const prompt = renderPrompt({ role: "final_reviewer", taskId: "x", prompt: "review", artifacts: {}, cwd: "/tmp", sessionDir: "/tmp/session", model: { model: "openai-codex/gpt-5.6-sol", reasoning: "low" } });
-  assert.match(prompt, /VERDICT: pass, VERDICT: fail, or VERDICT: escalate/);
+  assert.match(prompt, /VERDICT: pass, VERDICT: fail, VERDICT: escalate, or VERDICT: needs_spec/);
+  assert.match(prompt, /not a substitute for fail/);
+});
+
+test("the implementer is told to stay in scope and to answer prior findings one by one", () => {
+  const prompt = renderPrompt({ role: "implementer", taskId: "x", prompt: "build", artifacts: {}, cwd: "/tmp", sessionDir: "/tmp/session", model: { model: "openai-codex/gpt-5.6-luna", reasoning: "medium" } });
+  assert.match(prompt, /Do not refactor, do not reformat, and do not touch files unrelated to the requested change/);
+  assert.match(prompt, /Respond to every prior finding explicitly/);
 });
 
 test("classifier prompt excludes incomplete implementation from risk assessment", () => {

@@ -10,11 +10,11 @@
 | Mobile entry | `extensions/orchestrate.ts` | 註冊 spec tool、`/dev-flow`、`/dev` 與 `/orchestrate`，非同步啟動 CLI |
 | Domain | `src/spec.ts`、`src/handoff.ts`、`src/agents/contracts.ts` | Spec lifecycle、輸入與 agent request/result 型別 |
 | Routing | `src/routing.ts`、`src/models.ts`、`src/classifier-prompt.ts` | deterministic floor、model classifier 合併、模型選擇 |
-| Workflow | `src/orchestrator.ts` | round、升級、測試、review 與完成條件 |
+| Workflow | `src/orchestrator.ts` | cycle、升級、測試、review 與完成條件 |
 | Adapter | `src/adapters/pi/pi-process-adapter.ts` | Pi child process、工具權限、JSONL 與 verdict 解析 |
 | Execution | `src/test-runner.ts` | 依序執行 deterministic shell commands |
 
-`src/workflows/review-loop.ts` 與 `src/policies/completion-policy.ts` 保留一套純狀態機及其測試；目前 CLI 的主流程由 `src/orchestrator.ts` 直接控制，沒有呼叫該狀態機。
+`src/policies/completion-policy.ts` 是「失敗後是否重試」的唯一判斷來源。`src/orchestrator.ts` 的四個失敗分支（測試失敗、reviewer fail、已達最高 tier 仍 escalate、final reviewer fail）一律呼叫 `nextRound`，輪次上限只允許出現在該檔案的 `DEFAULT_MAX_ROUNDS`。
 
 ## 執行序列
 
@@ -67,10 +67,11 @@ sequenceDiagram
 ├── router-<timestamp>/
 └── runs/<run-id>/
     ├── run.json
-    ├── round-<n>-implementer.json
-    ├── round-<n>-tests.json
-    ├── round-<n>-reviewer.json
-    ├── round-<n>-final.json       # Tier 2 才有
+    ├── cycle-<n>-implementer.json
+    ├── cycle-<n>-tests.json
+    ├── cycle-<n>-reviewer.json
+    ├── cycle-<n>-final.json       # Tier 2 才有
+    ├── decisions.json             # 跨 cycle 累積的 findings 與 implementer 回應
     ├── summary.json
     └── summary.md
 ```

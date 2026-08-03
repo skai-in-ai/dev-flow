@@ -16,8 +16,7 @@ handoff → hybrid route → implement → actual-diff risk scan → tests → i
 
 ## Structure
 
-- `src/workflows/`: 純狀態機，沒有 provider、process 或檔案系統依賴。
-- `src/policies/`: 可替換的 completion / retry policy。
+- `src/policies/`: 可替換的 completion / retry policy，是輪次上限的唯一來源。
 - `src/agents/`: provider-neutral agent contracts。
 - `src/adapters/pi/`: 真正的 Pi JSON child-process adapter，保存 JSONL 與 metadata。
 - `src/test/`: Node 內建 test runner 的單元測試。

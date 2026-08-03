@@ -5,14 +5,19 @@ import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
 
 import type { AgentRunner, ReviewVerdict, Tier } from "./agents/contracts.js";
+export type { ReviewVerdict };
 import type { Handoff, RepoConfig } from "./handoff.js";
 import { hybridRoute, type ModelClassifier, type RoutingResult } from "./routing.js";
 import { modelFor } from "./models.js";
+import { DEFAULT_MAX_FIX_CYCLES, maxCyclesFor, nextCycle } from "./policies/completion-policy.js";
+import { EMPTY_DECISION_LOG, appendFindings, appendResponse, formatDecisionLog, type DecisionLog, type FindingSource } from "./decision-log.js";
 import { runTests, type CommandRunner, type TestResult } from "./test-runner.js";
 
 const execFileAsync = promisify(execFile);
 export interface OrchestratorDependencies { agents: AgentRunner; tests: CommandRunner; classifier?: ModelClassifier; config?: RepoConfig; now?: () => Date; }
-export interface RunOutcome { status: "ready_for_main" | "needs_human" | "failed"; runId: string; tier: Tier; rounds: number; routing: RoutingResult; }
+/** reviewer 判定「handoff 未定義的產品語意」時交回的內容，供討論階段直接使用。 */
+export interface SpecGap { semantic: string; candidates: string[]; }
+export interface RunOutcome { status: "ready_for_main" | "needs_human" | "failed"; runId: string; tier: Tier; cycles: number; maxCycles: number; routing: RoutingResult; specGap?: SpecGap; }
 
 export class Orchestrator {
   constructor(private readonly deps: OrchestratorDependencies) {}
@@ -25,12 +30,29 @@ export class Orchestrator {
     const baseline = await git(repo, ["rev-parse", "HEAD"]).catch(() => "unborn");
     const initial = await hybridRoute(handoff, this.deps.config, this.deps.classifier);
     await ledger(root, "run.json", { runId, handoff, baseline, initialRouting: initial, startedAt: (this.deps.now?.() ?? new Date()).toISOString() });
-    let effective = initial, round = 1, implementationNeeded = true, lastFindings: string[] = [];
-    while (round <= 3) {
-      onProgress(`Round ${round}/3 · Tier ${effective.tier}`);
+    const maxFixCycles = this.deps.config?.maxFixCycles ?? DEFAULT_MAX_FIX_CYCLES;
+    let effective = initial, cycle = 1, implementationNeeded = true, lastFindings: string[] = [];
+    let decisionLog: DecisionLog = EMPTY_DECISION_LOG;
+    /** 累積失敗紀錄並落盤。歷史一律保留，不覆寫，也不標記任何 finding 為已推翻。 */
+    const record = async (source: FindingSource, model: string, texts: readonly string[]): Promise<void> => {
+      decisionLog = appendFindings(decisionLog, texts.filter(Boolean).map((text) => ({ round: cycle, source, model, text })));
+      await ledger(root, "decisions.json", decisionLog);
+    };
+    /** 失敗當下呼叫。回傳 false 代表修正次數已用盡，呼叫端必須收斂為 needs_human。 */
+    const advance = (): boolean => {
+      const decision = nextCycle({ cycle, maxFixCycles });
+      if (decision.action === "give_up") return false;
+      cycle = decision.state.cycle;
+      implementationNeeded = true;
+      return true;
+    };
+    while (cycle <= maxCyclesFor(maxFixCycles)) {
+      onProgress(`Cycle ${cycle}/${maxCyclesFor(maxFixCycles)} · Tier ${effective.tier}`);
       if (implementationNeeded) {
-        const result = await this.deps.agents.run({ role: "implementer", taskId: runId, cwd: repo, sessionDir: join(root, `round-${round}-implementer`), model: modelFor(effective.tier, "implementer", round), prompt: `Implement this handoff:\n${JSON.stringify(handoff, null, 2)}${lastFindings.length ? `\nFix these findings:\n${lastFindings.join("\n")}` : ""}`, artifacts: { handoff: JSON.stringify(handoff, null, 2), baseline, findings: lastFindings.join("\n") } });
-        await ledger(root, `round-${round}-implementer.json`, result); onProgress(`Implementer: ${result.summary.slice(0, 160)}`);
+        const implementerModel = modelFor(effective.tier, "implementer", cycle);
+        const result = await this.deps.agents.run({ role: "implementer", taskId: runId, cwd: repo, sessionDir: join(root, `cycle-${cycle}-implementer`), model: implementerModel, prompt: `Implement this handoff:\n${JSON.stringify(handoff, null, 2)}${lastFindings.length ? `\nFix these findings:\n${lastFindings.join("\n")}` : ""}`, artifacts: { handoff: JSON.stringify(handoff, null, 2), baseline, findings: lastFindings.join("\n"), decision_log: formatDecisionLog(decisionLog) } });
+        await ledger(root, `cycle-${cycle}-implementer.json`, result); onProgress(`Implementer: ${result.summary.slice(0, 160)}`);
+        if (cycle > 1) { decisionLog = appendResponse(decisionLog, { round: cycle - 1, model: implementerModel.model, text: result.summary }); await ledger(root, "decisions.json", decisionLog); }
         if (await git(repo, ["rev-parse", "HEAD"]).then((head) => head.trim()) !== baseline.trim()) throw new Error("Implementer changed HEAD; commit/push is forbidden");
       }
       const diff = await workingDiff(repo);
@@ -41,25 +63,41 @@ export class Orchestrator {
       const baseTests = handoff.tests.length ? handoff.tests : (this.deps.config?.tests ?? []);
       const testCommands = [...new Set([...baseTests, ...(this.deps.config?.testsByTier?.[effective.tier] ?? [])])];
       if (testCommands.length === 0) onProgress("Tests: no deterministic commands configured; reviewers will receive this explicitly.");
-      const testResults = await runTests(this.deps.tests, testCommands, repo); await ledger(root, `round-${round}-tests.json`, testResults);
-      if (testResults.some((test) => !test.passed)) { lastFindings = testResults.filter((test) => !test.passed).map((test) => `${test.command}: ${test.output}`); if (round === 3) return this.finish(root, "needs_human", runId, effective.tier, round, effective); round++; implementationNeeded = true; continue; }
-      const artifacts = { handoff: JSON.stringify(handoff, null, 2), diff, tests: formatTests(testResults), repo_rules: await repoRules(repo) };
-      const review = await this.deps.agents.run({ role: "reviewer", taskId: runId, cwd: repo, sessionDir: join(root, `round-${round}-reviewer`), model: modelFor(effective.tier, "reviewer"), prompt: "Review the supplied final diff against the handoff. You are read-only.", artifacts });
-      await ledger(root, `round-${round}-reviewer.json`, review);
+      const testResults = await runTests(this.deps.tests, testCommands, repo); await ledger(root, `cycle-${cycle}-tests.json`, testResults);
+      if (testResults.some((test) => !test.passed)) { lastFindings = testResults.filter((test) => !test.passed).map((test) => `${test.command}: ${test.output}`); await record("tests", "deterministic", lastFindings); if (!advance()) return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective); continue; }
+      const artifacts = { handoff: JSON.stringify(handoff, null, 2), diff, tests: formatTests(testResults), repo_rules: await repoRules(repo), decision_log: formatDecisionLog(decisionLog) };
+      const reviewerModel = modelFor(effective.tier, "reviewer");
+      const review = await this.deps.agents.run({ role: "reviewer", taskId: runId, cwd: repo, sessionDir: join(root, `cycle-${cycle}-reviewer`), model: reviewerModel, prompt: "Review the supplied final diff against the handoff. You are read-only.", artifacts });
+      await ledger(root, `cycle-${cycle}-reviewer.json`, review);
       const verdict = review.verdict ?? "fail";
+      const reviewGap = specGap(verdict, review.findings);
+      if (reviewGap) { await record("reviewer", reviewerModel.model, [reviewGap.semantic, ...reviewGap.candidates]); onProgress(`Reviewer reports an undefined product semantic; returning to discussion without consuming a cycle.`); return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, reviewGap); }
       if (verdict === "escalate" && effective.tier < 2) { effective = { ...effective, tier: (effective.tier + 1) as Tier, reasons: [...effective.reasons, "reviewer escalation"] }; implementationNeeded = false; onProgress(`Reviewer escalated to Tier ${effective.tier}; re-reviewing without reimplementation.`); continue; }
-      if (verdict === "escalate") { lastFindings = [...(review.findings ?? []), review.summary]; if (round === 3) return this.finish(root, "needs_human", runId, effective.tier, round, effective); round++; implementationNeeded = true; continue; }
-      if (verdict === "fail") { lastFindings = [...(review.findings ?? []), review.summary]; if (round === 3) return this.finish(root, "needs_human", runId, effective.tier, round, effective); round++; implementationNeeded = true; continue; }
+      // 已達最高 tier 仍 escalate：reviewer 說的是「這超出我的判斷」而非「實作有錯」，
+      // 正確動作是交給 Sol 裁決，不是叫 implementer 再改一次。不消耗 cycle，不重新實作。
+      const deferredToFinal = verdict === "escalate";
+      if (deferredToFinal) onProgress("Reviewer escalated at the highest tier; deferring the decision to the final reviewer without consuming a cycle.");
+      // pass 與上述 escalate 以外一律走失敗路徑，包含降級的 needs_spec（候選答案不足）。
+      // 白名單而非黑名單：新增 verdict 時預設是「不放行」，不會靜默地把不合格的 review 當成通過。
+      if (verdict !== "pass" && !deferredToFinal) { lastFindings = [...(review.findings ?? []), review.summary]; await record("reviewer", reviewerModel.model, signal(review.findings, review.summary)); if (!advance()) return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective); continue; }
       if (effective.tier === 2) {
-        const final = await this.deps.agents.run({ role: "final_reviewer", taskId: runId, cwd: repo, sessionDir: join(root, `round-${round}-final`), model: modelFor(effective.tier, "final_reviewer"), prompt: "Perform the final, read-only release review. Verify requirement coverage and risk.", artifacts });
-        await ledger(root, `round-${round}-final.json`, final);
-        if ((final.verdict ?? "fail") !== "pass") { lastFindings = [...(final.findings ?? []), final.summary]; if (round === 3) return this.finish(root, "needs_human", runId, effective.tier, round, effective); round++; implementationNeeded = true; continue; }
+        const finalModel = modelFor(effective.tier, "final_reviewer");
+        const final = await this.deps.agents.run({ role: "final_reviewer", taskId: runId, cwd: repo, sessionDir: join(root, `cycle-${cycle}-final`), model: finalModel, prompt: "Perform the final, read-only release review. Verify requirement coverage and risk.", artifacts });
+        await ledger(root, `cycle-${cycle}-final.json`, final);
+        const finalGap = specGap(final.verdict, final.findings);
+        if (finalGap) { await record("final_reviewer", finalModel.model, [finalGap.semantic, ...finalGap.candidates]); onProgress(`Final reviewer reports an undefined product semantic; returning to discussion without consuming a cycle.`); return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, finalGap); }
+        if ((final.verdict ?? "fail") !== "pass") { lastFindings = [...(final.findings ?? []), final.summary]; await record("final_reviewer", finalModel.model, signal(final.findings, final.summary)); if (!advance()) return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective); continue; }
       }
-      return this.finish(root, "ready_for_main", runId, effective.tier, round, effective);
+      return this.finish(root, "ready_for_main", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective);
     }
-    return this.finish(root, "needs_human", runId, effective.tier, round, effective);
+    return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective);
   }
-  private async finish(root: string, status: RunOutcome["status"], runId: string, tier: Tier, rounds: number, routing: RoutingResult): Promise<RunOutcome> { const outcome = { status, runId, tier, rounds, routing }; await ledger(root, "summary.json", outcome); await writeFile(join(root, "summary.md"), `# ${status}\n\nTier: ${tier}\nRounds: ${rounds}\n`); return outcome; }
+  private async finish(root: string, status: RunOutcome["status"], runId: string, tier: Tier, cycles: number, maxCycles: number, routing: RoutingResult, gap?: SpecGap): Promise<RunOutcome> {
+    const outcome: RunOutcome = { status, runId, tier, cycles, maxCycles, routing, ...(gap ? { specGap: gap } : {}) };
+    await ledger(root, "summary.json", outcome);
+    await writeFile(join(root, "summary.md"), `# ${status}\n\nTier: ${tier}\nCycles: ${cycles}/${maxCycles}\n${gap ? `\n${renderSpecGap(gap)}` : ""}`);
+    return outcome;
+  }
 }
 async function ledger(root: string, name: string, value: unknown): Promise<void> { await writeFile(join(root, name), `${JSON.stringify(value, null, 2)}\n`); }
 async function git(cwd: string, args: string[]): Promise<string> { const { stdout } = await execFileAsync("git", args, { cwd }); return stdout; }
@@ -87,3 +125,28 @@ export function formatTests(results: TestResult[]): string {
   return results.map((result) => `${result.passed ? "PASS" : "FAIL"} ${result.command}\n${result.output}`).join("\n");
 }
 async function repoRules(repo: string): Promise<string> { try { return await readFile(join(repo, "CLAUDE.md"), "utf8"); } catch { return ""; } }
+/**
+ * decision log 只收結構化 findings；沒有 findings 時才退回整段 summary。
+ * implementer 的 prompt 仍會收到 summary（見 lastFindings），但歷史紀錄若把每輪的
+ * 散文全文都留下，後續 reviewer 讀到的訊噪比會迅速惡化。
+ */
+/**
+ * `needs_spec` 的防濫用檢查。
+ *
+ * reviewer 可能把 needs_spec 當成遇到難題就丟人工的偷懶出口，所以要求它必須交出
+ * 「缺的語意 + 至少兩個候選答案」才算數，湊不出來就退回一般 fail 路徑重試。
+ * 回傳 undefined 代表這不是（或不合格的）spec 缺口，呼叫端應照原本的 verdict 處理。
+ */
+export function specGap(verdict: ReviewVerdict | undefined, findings: readonly string[] | undefined): SpecGap | undefined {
+  if (verdict !== "needs_spec") return undefined;
+  const entries = (findings ?? []).map((finding) => finding.trim()).filter(Boolean);
+  if (entries.length < 3) return undefined;
+  return { semantic: entries[0], candidates: entries.slice(1) };
+}
+export function renderSpecGap(gap: SpecGap): string {
+  return `## 缺的語意\n${gap.semantic}\n\n## 候選答案\n${gap.candidates.map((candidate) => `- ${candidate}`).join("\n")}\n`;
+}
+export function signal(findings: readonly string[] | undefined, summary: string): readonly string[] {
+  const structured = (findings ?? []).filter((finding) => finding.trim());
+  return structured.length ? structured : [summary];
+}

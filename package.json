@@ -5,7 +5,7 @@
   "description": "Provider-agnostic, approval-friendly coding-agent review workflow.",
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json && tsc -p tsconfig.extensions.json",
+    "build": "rm -rf dist && tsc -p tsconfig.json && tsc -p tsconfig.extensions.json",
     "test": "npm run build && node --test dist/test/*.test.js",
     "orchestrate": "npm run build && node dist/cli.js"
   },

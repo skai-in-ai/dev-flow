@@ -23,7 +23,7 @@ Agent Orchestrator 將主討論 session 的結論保存為結構化 spec，再�
   → ready_for_main 或 needs_human
 ```
 
-最多允許三個失敗 round。單純升級 tier 不算失敗 round，也不會自動重做已完成的 implementation；流程會先用較強 reviewer 重新檢查。T1 由 Luna High implementer 與 context-isolated Luna High reviewer 通過後直接 `ready_for_main`。T2 第 1 round 以 Luna High 實作、Terra Medium review、Sol Medium final；任何失敗使下一 round 的 implementer 升級為 Terra Medium。
+最多允許三次修正（共四次實作）。單純升級 tier 與 `needs_spec` 都不消耗 cycle，也不會自動重做已完成的 implementation；流程會先用較強 reviewer 重新檢查。implementer 的模型只看 cycle：首次 Luna Medium、兩次修正 Luna High、第三次修正才升 Terra Medium。tier 只決定 reviewer：T1 為 Luna High，T2 為 Terra Medium 加 Sol Medium final。
 
 ## 使用入口
 

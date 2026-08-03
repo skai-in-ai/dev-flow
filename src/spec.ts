@@ -120,6 +120,27 @@ export function withSpecStatus(markdown: string, status: SpecStatus): string {
   return markdown.replace(/^status:\s*(?:draft|approved|ready_for_main|needs_clarification)\s*$/m, `status: ${status}`);
 }
 export async function updateSpecStatus(path: string, status: SpecStatus): Promise<void> { const resolved = resolve(path); await writeFile(resolved, withSpecStatus(await readFile(resolved, "utf8"), status)); }
+
+/**
+ * 把 reviewer 找到的產品語意缺口寫回 spec 的「未決事項」，讓 `needs_spec` 成為回到討論
+ * 階段的那條邊，而不是一個死路。下次任一 agent（Claude Code 或 Pi）打開這份 spec，
+ * 就直接看到該問使用者什麼，不必去翻 ledger。
+ *
+ * 既有的未決事項會保留在前；重複寫入同一個缺口不會產生重複項目。
+ */
+export function withUnresolvedItems(markdown: string, items: readonly string[]): string {
+  const spec = parseSpec(markdown);
+  const additions = items.map((item) => item.trim()).filter(Boolean).filter((item) => !spec.unresolvedItems.includes(item));
+  if (!additions.length) return markdown;
+  return renderSpec({ ...spec, unresolvedItems: [...spec.unresolvedItems, ...additions] });
+}
+
+/** `needs_spec` 的回寫：狀態設為 needs_clarification，並附上缺口與候選答案。 */
+export async function returnSpecToDiscussion(path: string, semantic: string, candidates: readonly string[]): Promise<void> {
+  const resolved = resolve(path);
+  const withItems = withUnresolvedItems(await readFile(resolved, "utf8"), [semantic, ...candidates.map((candidate) => `候選答案：${candidate}`)]);
+  await writeFile(resolved, withSpecStatus(withItems, "needs_clarification"));
+}
 export function defaultSpecFilename(spec: Pick<TaskSpec, "createdAt" | "title">): string {
   const date = spec.createdAt.slice(0, 10) || new Date().toISOString().slice(0, 10);
   const slug = spec.title.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fff]+/gi, "-").replace(/^-+|-+$/g, "") || basename("task");

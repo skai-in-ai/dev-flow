@@ -15,7 +15,7 @@ npm test
 單元測試使用 fake agent。要驗證登入、模型名稱、Pi CLI flags 與真實 reviewer output，需在一次性乾淨 Git repo 執行完整 handoff，確認結果為：
 
 ```text
-READY_FOR_MAIN · Tier <n> · <round>/3 rounds
+READY_FOR_MAIN · Tier <n> · <cycle>/<maxCycles> cycles
 ```
 
 ## 目標 repo 安全條件
