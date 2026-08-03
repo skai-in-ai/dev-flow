@@ -10,14 +10,15 @@ import type { Handoff, RepoConfig } from "./handoff.js";
 import { hybridRoute, type ModelClassifier, type RoutingResult } from "./routing.js";
 import { modelFor } from "./models.js";
 import { DEFAULT_MAX_FIX_CYCLES, maxCyclesFor, nextCycle } from "./policies/completion-policy.js";
-import { EMPTY_DECISION_LOG, appendFindings, appendResponse, formatDecisionLog, type DecisionLog, type FindingSource } from "./decision-log.js";
+import { EMPTY_DECISION_LOG, appendFindings, appendResponse, formatDecisionLog, repeatsPreviousCycle, type DecisionLog, type FindingSource } from "./decision-log.js";
 import { runTests, type CommandRunner, type TestResult } from "./test-runner.js";
+import { renderReport } from "./report.js";
 
 const execFileAsync = promisify(execFile);
 export interface OrchestratorDependencies { agents: AgentRunner; tests: CommandRunner; classifier?: ModelClassifier; config?: RepoConfig; now?: () => Date; }
 /** reviewer 判定「handoff 未定義的產品語意」時交回的內容，供討論階段直接使用。 */
 export interface SpecGap { semantic: string; candidates: string[]; }
-export interface RunOutcome { status: "ready_for_main" | "needs_human" | "failed"; runId: string; tier: Tier; cycles: number; maxCycles: number; routing: RoutingResult; specGap?: SpecGap; cost: RunCost; }
+export interface RunOutcome { status: "ready_for_main" | "needs_human" | "failed"; runId: string; tier: Tier; cycles: number; maxCycles: number; routing: RoutingResult; specGap?: SpecGap; cost: RunCost; error?: string; }
 /** 依角色分攤的花費；`total` 含 router。單位為美金。 */
 export interface RunCost { total: number; byRole: Record<string, number> }
 /**
@@ -55,6 +56,21 @@ export class Orchestrator {
     };
     // spec 會被就地改寫，執行當下的原文必須快照。
     if (source.specMarkdown) await writeFile(join(root, "spec.md"), source.specMarkdown);
+    const maxFixCyclesEarly = this.deps.config?.maxFixCycles ?? DEFAULT_MAX_FIX_CYCLES;
+    const preflightCommands = preflightTestCommands(handoff, this.deps.config);
+    if (preflightCommands.length && this.deps.config?.skipPreflight !== true) {
+      const preflight = await runTests(this.deps.tests, preflightCommands, repo);
+      await ledger(root, "preflight-tests.json", preflight);
+      const broken = preflight.filter((test) => !test.passed);
+      if (broken.length) {
+        // baseline 是乾淨的 HEAD，此時測試就不過代表環境或既有程式碼有問題，
+        // 不是這次要做的事造成的。implementer 修不好「pytest 沒安裝」這種事，
+        // 實測有一個 run 因此連燒四個 cycle。在花任何模型錢之前就停。
+        const reason = `preflight failed on a clean tree; the environment or the existing code is broken before this task starts:\n${broken.map((test) => `${test.command}: ${test.output}`).join("\n")}`;
+        onProgress("Preflight: deterministic tests fail on the untouched baseline; refusing to start.");
+        return this.finish(root, "needs_human", runId, initialTierGuess(source), 0, maxCyclesFor(maxFixCyclesEarly), await hybridRoute(handoff, this.deps.config, undefined), { total: 0, byRole: {} }, startedAt, source, undefined, reason);
+      }
+    }
     const initial = applyTierCap(await hybridRoute(handoff, this.deps.config, this.deps.classifier, "", join(root, "router-initial")), source.maxTier);
     charge("router", initial.costUsd);
     await ledger(root, "run.json", { runId, handoff, baseline, initialRouting: initial, startedAt: startedAt.toISOString(), source: { specPath: source.specPath, specTitle: source.specTitle, maxTier: source.maxTier } });
@@ -66,18 +82,28 @@ export class Orchestrator {
       decisionLog = appendFindings(decisionLog, texts.filter(Boolean).map((text) => ({ round: cycle, source, model, text })));
       await ledger(root, "decisions.json", decisionLog);
     };
-    /** 失敗當下呼叫。回傳 false 代表修正次數已用盡，呼叫端必須收斂為 needs_human。 */
+    let stallReason: string | undefined;
+    /**
+     * 失敗當下呼叫。回傳 false 代表本次 run 應收斂為 needs_human，原因是修正次數
+     * 用盡，或這個 cycle 的失敗與上一個 cycle 逐字元相同（再修一次也不會變）。
+     */
     const advance = (): boolean => {
+      if (repeatsPreviousCycle(decisionLog, cycle)) {
+        stallReason = `identical failure repeated in cycle ${cycle - 1} and ${cycle}; another implementation attempt cannot change it`;
+        onProgress(`Stalled: ${stallReason}`);
+        return false;
+      }
       const decision = nextCycle({ cycle, maxFixCycles });
       if (decision.action === "give_up") return false;
       cycle = decision.state.cycle;
       implementationNeeded = true;
       return true;
     };
+    try {
     while (cycle <= maxCyclesFor(maxFixCycles)) {
       onProgress(`Cycle ${cycle}/${maxCyclesFor(maxFixCycles)} · Tier ${effective.tier}`);
       if (implementationNeeded) {
-        const implementerModel = modelFor(effective.tier, "implementer", cycle);
+        const implementerModel = modelFor(effective.tier, "implementer", cycle, source.maxTier);
         const result = await this.deps.agents.run({ role: "implementer", taskId: runId, cwd: repo, sessionDir: join(root, `cycle-${cycle}-implementer`), model: implementerModel, timeoutMs: 25 * 60_000, prompt: `Implement this handoff:\n${JSON.stringify(handoff, null, 2)}${lastFindings.length ? `\nFix these findings:\n${lastFindings.join("\n")}` : ""}`, artifacts: { handoff: JSON.stringify(handoff, null, 2), baseline, findings: lastFindings.join("\n"), decision_log: formatDecisionLog(decisionLog) } });
         await ledger(root, `cycle-${cycle}-implementer.json`, result); charge("implementer", costOf(result.usage)); onProgress(`Implementer: ${result.summary.slice(0, 160)}`);
         if (cycle > 1) { decisionLog = appendResponse(decisionLog, { round: cycle - 1, model: implementerModel.model, text: result.summary }); await ledger(root, "decisions.json", decisionLog); }
@@ -95,20 +121,20 @@ export class Orchestrator {
       const testCommands = [...new Set([...baseTests, ...(this.deps.config?.testsByTier?.[effective.tier] ?? [])])];
       if (testCommands.length === 0) onProgress("Tests: no deterministic commands configured; reviewers will receive this explicitly.");
       const testResults = await runTests(this.deps.tests, testCommands, repo); await ledger(root, `cycle-${cycle}-tests.json`, testResults);
-      if (testResults.some((test) => !test.passed)) { lastFindings = testResults.filter((test) => !test.passed).map((test) => `${test.command}: ${test.output}`); await record("tests", "deterministic", lastFindings); if (!advance()) return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source); continue; }
+      if (testResults.some((test) => !test.passed)) { lastFindings = testResults.filter((test) => !test.passed).map((test) => `${test.command}: ${test.output}`); await record("tests", "deterministic", lastFindings); if (!advance()) return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source, undefined, stallReason, decisionLog); continue; }
       const artifacts = { handoff: JSON.stringify(handoff, null, 2), diff, tests: formatTests(testResults), repo_rules: await repoRules(repo), decision_log: formatDecisionLog(decisionLog) };
       const reviewerModel = modelFor(effective.tier, "reviewer");
       const review = await this.deps.agents.run({ role: "reviewer", taskId: runId, cwd: repo, sessionDir: join(root, `cycle-${cycle}-reviewer`), model: reviewerModel, prompt: "Review the supplied final diff against the handoff. You are read-only.", artifacts });
       await ledger(root, `cycle-${cycle}-reviewer.json`, review); charge("reviewer", costOf(review.usage));
       const verdict = review.verdict ?? "fail";
       const reviewGap = specGap(verdict, review.findings);
-      if (reviewGap) { await record("reviewer", reviewerModel.model, [reviewGap.semantic, ...reviewGap.candidates]); onProgress(`Reviewer reports an undefined product semantic; returning to discussion without consuming a cycle.`); return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source, reviewGap); }
+      if (reviewGap) { await record("reviewer", reviewerModel.model, [reviewGap.semantic, ...reviewGap.candidates]); onProgress(`Reviewer reports an undefined product semantic; returning to discussion without consuming a cycle.`); return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source, reviewGap, undefined, decisionLog); }
       if (verdict === "escalate" && effective.tier < 2 && (source.maxTier === undefined || effective.tier < source.maxTier)) { effective = applyTierCap({ ...effective, tier: (effective.tier + 1) as Tier, reasons: [...effective.reasons, "reviewer escalation"] }, source.maxTier); implementationNeeded = false; onProgress(`Reviewer escalated to Tier ${effective.tier}; re-reviewing without reimplementation.`); continue; }
       if (verdict === "escalate" && source.maxTier !== undefined && effective.tier >= source.maxTier && source.maxTier < 2) {
         const finding = `reviewer requested escalation beyond operator max-tier cap ${source.maxTier}`;
         await record("reviewer", reviewerModel.model, [finding]);
         onProgress(`Reviewer escalation blocked by --max-tier ${source.maxTier}; returning for human review.`);
-        return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source);
+        return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source, undefined, undefined, decisionLog);
       }
       // 已達最高 tier 仍 escalate：reviewer 說的是「這超出我的判斷」而非「實作有錯」，
       // 正確動作是交給 Sol 裁決，不是叫 implementer 再改一次。不消耗 cycle，不重新實作。
@@ -116,34 +142,54 @@ export class Orchestrator {
       if (deferredToFinal) onProgress("Reviewer escalated at the highest tier; deferring the decision to the final reviewer without consuming a cycle.");
       // pass 與上述 escalate 以外一律走失敗路徑，包含降級的 needs_spec（候選答案不足）。
       // 白名單而非黑名單：新增 verdict 時預設是「不放行」，不會靜默地把不合格的 review 當成通過。
-      if (verdict !== "pass" && !deferredToFinal) { lastFindings = [...(review.findings ?? []), review.summary]; await record("reviewer", reviewerModel.model, signal(review.findings, review.summary)); if (!advance()) return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source); continue; }
+      if (verdict !== "pass" && !deferredToFinal) { lastFindings = [...(review.findings ?? []), review.summary]; await record("reviewer", reviewerModel.model, signal(review.findings, review.summary)); if (!advance()) return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source, undefined, stallReason, decisionLog); continue; }
       if (effective.tier === 2) {
         const finalModel = modelFor(effective.tier, "final_reviewer");
         const final = await this.deps.agents.run({ role: "final_reviewer", taskId: runId, cwd: repo, sessionDir: join(root, `cycle-${cycle}-final`), model: finalModel, prompt: "Perform the final, read-only release review. Verify requirement coverage and risk.", artifacts });
         await ledger(root, `cycle-${cycle}-final.json`, final); charge("final_reviewer", costOf(final.usage));
         const finalGap = specGap(final.verdict, final.findings);
-        if (finalGap) { await record("final_reviewer", finalModel.model, [finalGap.semantic, ...finalGap.candidates]); onProgress(`Final reviewer reports an undefined product semantic; returning to discussion without consuming a cycle.`); return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source, finalGap); }
-        if ((final.verdict ?? "fail") !== "pass") { lastFindings = [...(final.findings ?? []), final.summary]; await record("final_reviewer", finalModel.model, signal(final.findings, final.summary)); if (!advance()) return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source); continue; }
+        if (finalGap) { await record("final_reviewer", finalModel.model, [finalGap.semantic, ...finalGap.candidates]); onProgress(`Final reviewer reports an undefined product semantic; returning to discussion without consuming a cycle.`); return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source, finalGap, undefined, decisionLog); }
+        if ((final.verdict ?? "fail") !== "pass") { lastFindings = [...(final.findings ?? []), final.summary]; await record("final_reviewer", finalModel.model, signal(final.findings, final.summary)); if (!advance()) return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source, undefined, stallReason, decisionLog); continue; }
       }
-      return this.finish(root, "ready_for_main", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source);
+      return this.finish(root, "ready_for_main", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source, undefined, undefined, decisionLog);
     }
-    return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source);
+    } catch (thrown) {
+      // Runtime exception 以前直接往外拋，結果是整個 run 沒有 summary、沒有成本歸戶、
+      // spec status 也不會回寫。實測 11 個 run 有 3 個因此完全查不到發生什麼事。
+      // 這裡把它落地成 `failed`，保留已累積的成本與錯誤訊息（含子程序 stderr）。
+      const message = thrown instanceof Error ? thrown.message : String(thrown);
+      onProgress(`Run failed: ${message.slice(0, 300)}`);
+      await this.finish(root, "failed", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source, undefined, message, decisionLog);
+      throw thrown;
+    }
+    return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source, undefined, stallReason, decisionLog);
   }
-  private async finish(root: string, status: RunOutcome["status"], runId: string, tier: Tier, cycles: number, maxCycles: number, routing: RoutingResult, cost: RunCost, startedAt: Date, source: RunSource, gap?: SpecGap): Promise<RunOutcome> {
-    const outcome: RunOutcome = { status, runId, tier, cycles, maxCycles, routing, cost, ...(gap ? { specGap: gap } : {}) };
+  private async finish(root: string, status: RunOutcome["status"], runId: string, tier: Tier, cycles: number, maxCycles: number, routing: RoutingResult, cost: RunCost, startedAt: Date, source: RunSource, gap?: SpecGap, error?: string, decisionLog: DecisionLog = EMPTY_DECISION_LOG): Promise<RunOutcome> {
+    const outcome: RunOutcome = { status, runId, tier, cycles, maxCycles, routing, cost, ...(gap ? { specGap: gap } : {}), ...(error ? { error } : {}) };
     await ledger(root, "summary.json", outcome);
     const money = `US$${cost.total.toFixed(5)}`;
-    await writeFile(join(root, "summary.md"), `# ${status}\n\nTier: ${tier}\nCycles: ${cycles}/${maxCycles}\nCost: ${money}\n${gap ? `\n${renderSpecGap(gap)}` : ""}`);
+    await writeFile(join(root, "summary.md"), `# ${status}\n\nTier: ${tier}\nCycles: ${cycles}/${maxCycles}\nCost: ${money}\n${error ? `\n## 中止原因\n${error}\n` : ""}${gap ? `\n${renderSpecGap(gap)}` : ""}`);
+    const durationMs = Math.max(0, (this.deps.now?.() ?? new Date()).getTime() - startedAt.getTime());
+    // 決定性報告：讓「這次跑了什麼、卡在哪、花多少」不必開多個 JSON 也不必再花一次模型錢去整理。
+    await writeFile(join(root, "report.md"), renderReport({
+      status, tier, maxTier: source.maxTier, cycles, maxCycles, cost, durationMs, runId,
+      specTitle: source.specTitle, specPath: source.specPath, decisionLog, specGap: gap, error,
+    }));
     await appendIndex(root, {
       runId, startedAt: startedAt.toISOString(),
-      durationMs: Math.max(0, (this.deps.now?.() ?? new Date()).getTime() - startedAt.getTime()),
-      status, tier, cycles, maxCycles, cost,
+      durationMs,
+      status, tier, cycles, maxCycles, cost, error,
       specPath: source.specPath, specTitle: source.specTitle,
       specGap: gap ? gap.semantic : undefined,
     });
     return outcome;
   }
 }
+/** 預檢用的測試命令：只取與 tier 無關的基礎命令，因為此時尚未決定 tier。 */
+export function preflightTestCommands(handoff: Handoff, config: RepoConfig | undefined): string[] {
+  return [...new Set(handoff.tests.length ? handoff.tests : (config?.tests ?? []))];
+}
+function initialTierGuess(source: RunSource): Tier { return source.maxTier ?? 0; }
 async function ledger(root: string, name: string, value: unknown): Promise<void> { await writeFile(join(root, name), `${JSON.stringify(value, null, 2)}\n`); }
 /** Pi usage 的成本欄位；缺漏時回傳 undefined，不讓統計因格式變動而爆掉。 */
 export function costOf(usage: Record<string, unknown> | undefined): number | undefined {

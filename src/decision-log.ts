@@ -49,6 +49,23 @@ export function appendResponse(log: DecisionLog, record: ResponseRecord): Decisi
   return { ...log, responses: [...log.responses, record] };
 }
 
+/**
+ * 這個 cycle 的 findings 是否與上一個 cycle 逐字元相同。
+ *
+ * 實測依據：一次真實 run 連續四個 cycle 收到完全相同的
+ * `Failed to spawn: pytest / No such file or directory`，四次實作全部白費。
+ * implementer 不可能修好「環境沒裝 pytest」，重跑只是把同一件事再做一次。
+ *
+ * 刻意採**完全相同**而非相似度比對：模糊比對會誤殺「同一個檔案的不同缺陷」，
+ * 而真正無望的情況（環境錯誤、無法滿足的斷言）本來就會逐字元重複，不需要模糊。
+ */
+export function repeatsPreviousCycle(log: DecisionLog, cycle: number): boolean {
+  if (cycle <= 1) return false;
+  const at = (round: number) => log.findings.filter((finding) => finding.round === round).map((finding) => finding.text.trim()).sort();
+  const current = at(cycle), previous = at(cycle - 1);
+  return current.length > 0 && current.length === previous.length && current.every((text, index) => text === previous[index]);
+}
+
 const NO_HISTORY = "NO PRIOR ROUNDS. This is the first implementation attempt.";
 
 /** 供 prompt artifact 使用的人類可讀格式。 */

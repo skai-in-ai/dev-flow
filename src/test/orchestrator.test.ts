@@ -41,7 +41,7 @@ test("applyTierCap leaves uncapped routing unchanged", () => {
   assert.equal(applyTierCap(routing, 1).tier, 1);
 });
 test("the last fix is reviewed before a human is asked for", async () => {
-  const path = await repo(); const agents = new FakeAgents([{ summary: "impl" }, { summary: "bad", verdict: "fail" }, { summary: "impl" }, { summary: "bad", verdict: "fail" }, { summary: "impl" }, { summary: "bad", verdict: "fail" }, { summary: "impl" }, { summary: "bad", verdict: "fail" }]);
+  const path = await repo(); const agents = new FakeAgents([{ summary: "impl" }, { summary: "bad 1", verdict: "fail" }, { summary: "impl" }, { summary: "bad 2", verdict: "fail" }, { summary: "impl" }, { summary: "bad 3", verdict: "fail" }, { summary: "impl" }, { summary: "bad 4", verdict: "fail" }]);
   const outcome = await new Orchestrator({ agents, tests: new PassingTests() }).run(handoff(path), () => {});
   assert.equal(outcome.status, "needs_human"); assert.equal(outcome.cycles, 4); assert.equal(agents.calls.filter((x) => x.role === "implementer").length, 4);
 });
@@ -75,8 +75,9 @@ test("carries every prior cycle's findings and responses into the later reviewer
 test("records failing test output in the decision log so the next reviewer sees it", async () => {
   const path = await repo();
   class OneFailingRun implements CommandRunner {
-    private first = true;
-    async run(command: string): Promise<TestResult> { const passed = !this.first; this.first = false; return { command, passed, output: passed ? "ok" : "AssertionError: expected 2", exitCode: passed ? 0 : 1 }; }
+    private calls = 0;
+    // 第 1 次是 baseline 預檢（必須過，否則流程會拒絕啟動），第 2 次才是 cycle 1 的失敗。
+    async run(command: string): Promise<TestResult> { this.calls += 1; const passed = this.calls !== 2; return { command, passed, output: passed ? "ok" : "AssertionError: expected 2", exitCode: passed ? 0 : 1 }; }
   }
   const agents = new FakeAgents([{ summary: "impl one" }, { summary: "impl two" }, { summary: "VERDICT: pass", verdict: "pass" }]);
   await new Orchestrator({ agents, tests: new OneFailingRun() }).run(handoff(path), () => {});
@@ -209,9 +210,9 @@ test("the final fix is reviewed by every required gate before a human is asked",
   const path = await repo();
   const highRisk = { ...handoff(path), objective: "add database migration" };
   const agents = new FakeAgents([
-    { summary: "impl 1" }, { summary: "no", verdict: "fail" },
-    { summary: "impl 2" }, { summary: "no", verdict: "fail" },
-    { summary: "impl 3" }, { summary: "no", verdict: "fail" },
+    { summary: "impl 1" }, { summary: "no 1", verdict: "fail" },
+    { summary: "impl 2" }, { summary: "no 2", verdict: "fail" },
+    { summary: "impl 3" }, { summary: "no 3", verdict: "fail" },
     { summary: "impl 4" }, { summary: "VERDICT: pass", verdict: "pass" }, { summary: "still no", verdict: "fail" },
   ]);
   const outcome = await new Orchestrator({ agents, tests: new PassingTests() }).run(highRisk, () => {});
@@ -292,4 +293,91 @@ test("the index accumulates one row per run and stays outside runs/", async () =
   // runs/ 只能有 run 目錄，讀取端才能直接 readdir 而不必過濾出檔案。
   const entries = await readdir(join(path, ".orchestrator", "runs"));
   assert.ok(entries.every((entry) => !entry.endsWith(".jsonl")), "the index must not sit among the run directories");
+});
+
+test("stops as soon as a failure repeats verbatim instead of burning the remaining cycles", async () => {
+  const path = await repo();
+  // 實測案例：`Failed to spawn: pytest` 連續四個 cycle 逐字元相同，四次實作全部白費。
+  class MissingBinary implements CommandRunner {
+    private calls = 0;
+    async run(command: string): Promise<TestResult> {
+      this.calls += 1;
+      const passed = this.calls === 1; // 預檢過，之後每次都是同一個錯誤
+      return { command, passed, output: passed ? "ok" : "Failed to spawn: `pytest`\n  No such file or directory", exitCode: passed ? 0 : 1 };
+    }
+  }
+  const agents = new FakeAgents([]);
+  const outcome = await new Orchestrator({ agents, tests: new MissingBinary() }).run(handoff(path), () => {});
+
+  assert.equal(outcome.status, "needs_human");
+  assert.equal(outcome.cycles, 2, "the identical second failure must end the run, not continue to cycle 4");
+  assert.equal(agents.calls.filter((call) => call.role === "implementer").length, 2);
+  const summary = await readFile(join(path, ".orchestrator", "runs", await latestRun(path), "summary.md"), "utf8");
+  assert.match(summary, /identical failure repeated/);
+});
+
+test("refuses to spend anything when the tests already fail on an untouched baseline", async () => {
+  const path = await repo();
+  class BrokenEnvironment implements CommandRunner {
+    async run(command: string): Promise<TestResult> { return { command, passed: false, output: "Failed to spawn: `pytest`", exitCode: 1 }; }
+  }
+  const agents = new FakeAgents([]);
+  const outcome = await new Orchestrator({ agents, tests: new BrokenEnvironment() }).run(handoff(path), () => {});
+
+  assert.equal(outcome.status, "needs_human");
+  assert.equal(outcome.cost.total, 0, "not a single model call may be paid for");
+  assert.equal(agents.calls.length, 0, "no agent may be started, not even the router");
+  const summary = await readFile(join(path, ".orchestrator", "runs", await latestRun(path), "summary.md"), "utf8");
+  assert.match(summary, /preflight failed on a clean tree/);
+});
+
+test("a crash is recorded as a failed run instead of vanishing", async () => {
+  const path = await repo();
+  class ExplodingAgents implements AgentRunner {
+    calls: AgentRunRequest[] = [];
+    async run(request: AgentRunRequest): Promise<AgentRunResult> {
+      this.calls.push(request);
+      throw new Error("Pi implementer exited 1: connection reset by peer");
+    }
+  }
+  const agents = new ExplodingAgents();
+  await assert.rejects(new Orchestrator({ agents, tests: new PassingTests() }).run(handoff(path), () => {}), /connection reset by peer/);
+
+  const dir = join(path, ".orchestrator", "runs", await latestRun(path));
+  const summary = JSON.parse(await readFile(join(dir, "summary.json"), "utf8")) as { status: string; error?: string; cost: { total: number } };
+  assert.equal(summary.status, "failed", "the run must leave a record; three real runs previously vanished without one");
+  assert.match(summary.error ?? "", /connection reset by peer/, "the child process stderr is the only clue to the root cause");
+  assert.equal(typeof summary.cost.total, "number", "accumulated cost must still be accounted for");
+});
+
+test("an operator tier cap also caps the implementer ladder", async () => {
+  const path = await repo();
+  const agents = new FakeAgents([
+    { summary: "impl 1" }, { summary: "no 1", verdict: "fail" },
+    { summary: "impl 2" }, { summary: "no 2", verdict: "fail" },
+    { summary: "impl 3" }, { summary: "no 3", verdict: "fail" },
+    { summary: "impl 4" }, { summary: "no 4", verdict: "fail" },
+  ]);
+  await new Orchestrator({ agents, tests: new PassingTests() }).run(handoff(path), () => {}, { maxTier: 1 });
+
+  const implementers = agents.calls.filter((call) => call.role === "implementer").map((call) => call.model.model);
+  assert.equal(implementers.length, 4);
+  assert.ok(!implementers.some((model) => model.includes("terra")), `a tier cap is a cost ceiling; Terra must not appear: ${implementers.join(", ")}`);
+});
+
+test("every run leaves a readable report next to the machine-readable ledger", async () => {
+  const path = await repo();
+  const agents = new FakeAgents([
+    { summary: "impl 1" }, { summary: "verdict", verdict: "fail", findings: ["**High** — ptt_tickers is never populated"] },
+    { summary: "改了 scraper，沒動 pipeline" }, { summary: "VERDICT: pass", verdict: "pass" },
+  ]);
+  const outcome = await new Orchestrator({ agents, tests: new PassingTests() }).run(handoff(path), () => {}, { maxTier: 1, specTitle: "PTT 推文情緒指標" });
+
+  assert.equal(outcome.status, "ready_for_main");
+  const report = await readFile(join(path, ".orchestrator", "runs", await latestRun(path), "report.md"), "utf8");
+  assert.match(report, /# 可以合併 · PTT 推文情緒指標/);
+  assert.match(report, /\| Cycle \| 2\/4 \|/);
+  assert.match(report, /ptt_tickers is never populated/, "the history must still show what was raised along the way");
+  assert.match(report, /改了 scraper，沒動 pipeline/, "and how the implementer answered it");
+  assert.match(report, /## 尚未解決\n\n無。/);
 });

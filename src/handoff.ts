@@ -20,6 +20,13 @@ export interface RepoConfig {
   riskPaths?: Record<string, Tier>;
   /** 因失敗而重新實作的次數上限；未設定時採 DEFAULT_MAX_FIX_CYCLES。 */
   maxFixCycles?: number;
+  /**
+   * 略過「在乾淨 baseline 上先跑一次測試」的預檢。
+   *
+   * 預設執行。它會多花一次測試時間，換掉整批「環境壞掉卻連燒數個 cycle」的浪費。
+   * 只有在測試本身昂貴且環境確定穩定時才值得關掉。
+   */
+  skipPreflight?: boolean;
 }
 
 export async function loadHandoff(path: string): Promise<Handoff> {

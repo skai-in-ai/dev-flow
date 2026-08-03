@@ -5,7 +5,7 @@ import { SpecNotReady, resolveTarget } from "./dev-flow.js";
 import { Orchestrator, costOf } from "./orchestrator.js";
 import { readFile } from "node:fs/promises";
 import { ShellTestRunner } from "./test-runner.js";
-import { classifierModel } from "./models.js";
+import { DEFAULT_MAX_TIER, classifierModel } from "./models.js";
 import type { ModelClassifier } from "./routing.js";
 import { renderClassifierPrompt } from "./classifier-prompt.js";
 import type { Tier } from "./agents/contracts.js";
@@ -14,12 +14,12 @@ const handoffIndex = process.argv.indexOf("--handoff");
 const specIndex = process.argv.indexOf("--spec");
 const maxTierIndex = process.argv.indexOf("--max-tier");
 const maxTierValue = maxTierIndex >= 0 ? process.argv[maxTierIndex + 1] : undefined;
-const maxTier = maxTierValue === "0" || maxTierValue === "1" || maxTierValue === "2" ? Number(maxTierValue) as Tier : undefined;
+const maxTier = maxTierValue === "0" || maxTierValue === "1" || maxTierValue === "2" ? Number(maxTierValue) as Tier : DEFAULT_MAX_TIER;
 // dev-flow 模式：不給任何旗標時，跑目前 repo 最新一份已定案的 spec。
 const devFlow = handoffIndex < 0 && specIndex < 0;
 const optionValueIndexes = new Set([handoffIndex + 1, specIndex + 1, maxTierIndex + 1].filter((index) => index > 1));
 const positional = process.argv.slice(2).filter((argument, index) => !argument.startsWith("--") && !optionValueIndexes.has(index + 2));
-if (maxTierIndex >= 0 && maxTier === undefined) { console.error("--max-tier 必須是 0、1 或 2"); process.exitCode = 2; }
+if (maxTierIndex >= 0 && maxTierValue !== "0" && maxTierValue !== "1" && maxTierValue !== "2") { console.error("--max-tier 必須是 0、1 或 2"); process.exitCode = 2; }
 else if (!devFlow && (handoffIndex < 0 || !process.argv[handoffIndex + 1]) && (specIndex < 0 || !process.argv[specIndex + 1])) { console.error("Usage: dev-flow [--max-tier 0|1|2] [path/to/spec.md] OR npm run orchestrate -- --handoff path/to/handoff.json [--max-tier 0|1|2] OR --spec path/to/spec.md [--max-tier 0|1|2]"); process.exitCode = 2; }
 else {
   let specPath = specIndex >= 0 ? process.argv[specIndex + 1] : undefined;
