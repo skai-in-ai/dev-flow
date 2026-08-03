@@ -14,7 +14,7 @@
 | Adapter | `src/adapters/pi/pi-process-adapter.ts` | Pi child process、工具權限、JSONL 與 verdict 解析 |
 | Execution | `src/test-runner.ts` | 依序執行 deterministic shell commands |
 
-`src/policies/completion-policy.ts` 是「失敗後是否重試」的唯一判斷來源。`src/orchestrator.ts` 的四個失敗分支（測試失敗、reviewer fail、已達最高 tier 仍 escalate、final reviewer fail）一律呼叫 `nextRound`，輪次上限只允許出現在該檔案的 `DEFAULT_MAX_ROUNDS`。
+`src/policies/completion-policy.ts` 是「失敗後是否重試」的唯一判斷來源。`src/orchestrator.ts` 的失敗分支（測試失敗、reviewer fail、降級的 needs_spec、final reviewer fail）一律呼叫 `nextCycle`，上限只允許出現在該檔案的 `DEFAULT_MAX_FIX_CYCLES`。相同失敗連續出現兩個 cycle 時，`nextCycle` 之前先熔斷。
 
 ## 執行序列
 
@@ -73,6 +73,8 @@ sequenceDiagram
     ├── cycle-<n>-final.json       # Tier 2 才有
     ├── spec.md                    # 執行當下的 spec 快照（spec 會被就地改寫）
     ├── decisions.json             # 跨 cycle 累積的 findings 與 implementer 回應
+    ├── preflight-tests.json       # baseline 預檢結果
+    ├── report.md                  # 人類可讀報告（決定性渲染）
     ├── cycle-<n>.diff             # 該 cycle 的完整 diff，第一級檔案
     ├── cycle-<n>-router/          # classifier session，歸屬於本次 run
     ├── summary.json

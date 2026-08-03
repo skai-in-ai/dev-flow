@@ -51,7 +51,7 @@ Extension 會立即通知 handoff 路徑，再以背景 child process 執行 orc
 - `/dev` 只接受 `approved` 且沒有未決事項的 spec。
 - `/dev-flow` 僅在本次命令建立的 approved spec 才會自動開始；draft 或 `needs_clarification` 一律停止在討論 session。
 - 測試要求必須是原始 shell command，例如 `npm test`，不能寫成「在 repo 執行 npm test」。
-- 成功後 spec 變為 `ready_for_main`；三輪未通過則變為 `needs_clarification`。
+- 成功後 spec 變為 `ready_for_main`；修正次數用盡或收到 `needs_spec` 則變為 `needs_clarification`（後者會把缺的語意與候選答案寫進未決事項）。
 - Session pointer 寫在 `~/.pi/agent-orchestrator/sessions/`，不同 session 不互相誤用。
 
 ## Draft handoff 行為

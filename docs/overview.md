@@ -35,6 +35,7 @@ Agent Orchestrator 將主討論 session 的結論保存為結構化 spec，再�
   → 完整：approved spec（.agent/specs/）→ 自動啟動
   → 不完整：draft / needs_clarification → 繼續討論後再 /dev-flow
   → handoff
+  → baseline 測試預檢（不過就拒絕啟動，零成本）
   → deterministic floor + Luna Medium risk classifier
   → Luna-first isolated implementer
   → actual diff reclassification（tier 只能升）
@@ -42,9 +43,10 @@ Agent Orchestrator 將主討論 session 的結論保存為結構化 spec，再�
   → isolated reviewer
   → Tier 2 isolated Sol final reviewer
   → ready_for_main 或 needs_human
+  → report.md（決定性渲染的人類可讀報告）
 ```
 
-最多允許三次修正（共四次實作）。單純升級 tier 與 `needs_spec` 都不消耗 cycle，也不會自動重做已完成的 implementation；流程會先用較強 reviewer 重新檢查。implementer 的模型只看 cycle：首次 Luna Medium、兩次修正 Luna High、第三次修正才升 Terra Medium。tier 只決定 reviewer：T1 為 Luna High，T2 為 Terra Medium 加 Sol Medium final。
+最多允許三次修正（共四次實作）。單純升級 tier 與 `needs_spec` 都不消耗 cycle，也不會自動重做已完成的 implementation；流程會先用較強 reviewer 重新檢查。implementer 的模型只看 cycle：首次 Luna Medium、兩次修正 Luna High、第三次修正才升 Terra Medium。tier 只決定 reviewer：T1 為 Luna High，T2 為 Terra Medium 加 Sol Medium final。**tier 上限預設為 1**，`--max-tier 2` 才會用到 Terra 與 Sol。相同失敗連續兩個 cycle 會提前熔斷。
 
 ## 使用入口
 

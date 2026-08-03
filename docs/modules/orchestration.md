@@ -64,6 +64,20 @@ log 只收結構化 findings，沒有 findings 時才退回整段 summary，避�
 
 成本由各 agent 的 `usage.cost.total` 累加，格式缺漏時該筆略過而不使整個 run 失敗。
 
+## 預檢
+
+在任何模型呼叫之前，先在乾淨的 baseline 上跑一次基礎測試命令（`handoff.tests`，為空則 `RepoConfig.tests`），結果寫入 `preflight-tests.json`。
+
+不過就拒絕啟動並收斂為 `needs_human`，成本為零。理由：baseline 是未動過的 HEAD，此時測試就不過代表環境或既有程式碼已經壞了，不是這次任務造成的，implementer 也修不好。實測有一個 run 因為環境沒安裝 `pytest`，連續四個 cycle 收到逐字元相同的錯誤，四次實作全部白費。
+
+代價是每次多跑一次測試。`RepoConfig.skipPreflight` 可關閉，只有在測試本身昂貴且環境確定穩定時才值得。
+
+## 相同失敗熔斷
+
+某個 cycle 的 findings 若與上一個 cycle **逐字元完全相同**，立即收斂為 `needs_human`，不再消耗剩餘 cycle，原因寫入 `summary.md`。
+
+刻意採完全相同而非相似度比對：模糊比對會誤殺「同一個檔案的不同缺陷」，而真正無望的情況（環境錯誤、無法滿足的斷言）本來就會逐字元重複。
+
 ## 測試來源
 
 Base tests 優先採用 `handoff.tests`；若為空則採用 `RepoConfig.tests`。再合併 effective tier 的 `RepoConfig.testsByTier[tier]` 並去重。命令依序執行，輸出完整保存到 ledger。
@@ -78,11 +92,21 @@ Base tests 優先採用 `handoff.tests`；若為空則採用 `RepoConfig.tests`�
 |:---|:---|
 | `ready_for_main` | 測試與該 tier 所需 reviews 通過；working tree 保留變更 |
 | `needs_human` | 修正次數用盡，或 reviewer 回報合格的 `needs_spec`（產品語意未定義） |
-| `failed` | 型別保留此值；目前主流程沒有以此值正常結束的分支，runtime exception 直接拋出 |
+| `failed` | Runtime exception。主迴圈會先寫出含錯誤訊息（含子程序 stderr）與已累積成本的 summary，再把例外往外拋 |
 
 目前不會 commit、push、merge 或切換 branch。
 
 若入口是 spec，`ready_for_main` 會同步將 spec status 更新為 `ready_for_main`；`needs_human` 則更新為 `needs_clarification`。若帶有 `specGap`，缺的語意與候選答案會一併寫回 spec 的「未決事項」，讓 `needs_spec` 成為回到討論階段的那條邊，而不是死路。Runtime exception 保留原 status，方便重試與診斷。
+
+## 執行報告
+
+每次 run 結束寫出 `report.md`（`src/report.ts`），內容為狀態、tier、cycle、花費、耗時、尚未解決的 findings 原文、逐 cycle 歷程與 implementer 的回應、成本分攤、下一步建議。
+
+**刻意不呼叫任何模型。** findings 已帶嚴重度標記與 file:line，結構化資料也都在，組裝是決定性的。先前這件事被外包給一個外層 agent 去讀 `summary.json` 加 `decisions.json` 再整理翻譯，等於每次都花一次模型錢做純字串組裝。
+
+已解決的 findings 收在 `<details>` 摺疊區保留原文，不只留條數：外層審查者常需要回頭看 reviewer 到底抓到什麼。
+
+外層那一層的**判斷**（這個結果能不能收、要不要重派）刻意不內建。它需要看 diff 加上你的意圖，而且放在流程外只跑一次，比放進流程裡每個 cycle 跑一次便宜。
 
 ## 兩個階段的介面
 

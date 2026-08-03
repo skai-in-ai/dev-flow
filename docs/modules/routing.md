@@ -22,6 +22,16 @@
 
 Classifier 使用 Luna Medium，且以 `--no-tools` 啟動。Prompt 明確要求只判技術與變更風險，不可因 initial diff 尚不存在、acceptance criteria 尚未完成或 implementation 尚未開始而升級。它只能將 tier 升高；deterministic floor 仍是不可降低的安全底線。
 
+## 預設 tier 上限
+
+未指定 `--max-tier` 時預設為 **1**（`DEFAULT_MAX_TIER`）。
+
+實測依據（2026-08-03，8 個真實 run）：review 佔總支出 79%（reviewer 44%、Sol final 35%），implementer 只佔 16%。上限壓到 1 會把 reviewer 從 Terra Medium 換成 Luna High（單次約 1/3 價）並整個略過 Sol final，實測單次 run 從 $0.10~$0.21 降到約 $0.023。同批資料中 Luna High 的 findings 有嚴重度分級與 file:line 引用，看不出品質降級。
+
+接受的取捨：Sol 曾在四次 final review 中攔下兩次 Terra 已放行的問題。壓到 tier 1 等於放棄那道網，實際把關的是流程停在 `ready_for_main` 之後的人工 diff 檢查。動到金流或下單時手動指定 `--max-tier 2`。
+
+**tier 上限同時約束 implementer 階梯**：`maxTier < 2` 時 implementer 永遠不升到 Terra。舊行為只約束 reviewer，於是設了上限的 run 在 cycle 4 仍會叫出 Terra，天花板等於沒設。
+
 ## Model matrix
 
 **Implementer 只看 cycle，不看 tier。** tier 只決定 reviewer 是誰。這讓成本可預期，並符合「實作盡量留在便宜的 Luna」的目標。

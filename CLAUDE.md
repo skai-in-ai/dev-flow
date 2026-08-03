@@ -28,6 +28,7 @@
 - Routing：`src/routing.ts`、`src/models.ts`、`src/classifier-prompt.ts`
 - Orchestration：`src/orchestrator.ts`、`src/test-runner.ts`、`src/policies/completion-policy.ts`、`src/decision-log.ts`
 - Prompt 預算：`src/prompt-budget.ts`
+- 執行報告：`src/report.ts`（決定性渲染，不得呼叫模型）
 - dev-flow 入口：`src/dev-flow.ts`、`bin/dev-flow`
 - Pi adapter：`src/adapters/pi/pi-process-adapter.ts`
 - Spec contract：`src/spec.ts`
@@ -60,6 +61,12 @@ bin/dev-flow spec.md    # 指定
 
 spec 尚未定案（status 非 approved 或仍有未決事項）時不會啟動，改為印出待答問題。
 
+tier 上限預設為 1（成本考量，見 `docs/modules/routing.md`）。動到金流或下單時：
+
+```bash
+bin/dev-flow --max-tier 2
+```
+
 ## 維護原則
 
 - 程式碼行為、tier/model 對照、handoff schema 或部署方式變更時，同步更新對應 `docs/`。
@@ -67,3 +74,4 @@ spec 尚未定案（status 非 approved 或仍有未決事項）時不會啟動�
 - MVP 停在 `ready_for_main`，不自動 commit 或 push。
 - 輪次上限只允許出現在 `src/policies/completion-policy.ts`；`orchestrator.ts` 的失敗分支一律呼叫 `nextCycle`。
 - `applyBudget` 不得原地改寫 `request.artifacts`；ledger 必須保留未截斷的原件。
+- 任何提前結束的路徑都必須經過 `finish()`；runtime exception 也要先落地成 `failed` summary 再往外拋。
