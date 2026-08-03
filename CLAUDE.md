@@ -18,7 +18,7 @@
 | 建立、解析或更新討論 spec | `docs/contracts/spec.md` |
 | 建立或驗證 handoff | `docs/contracts/handoff.md` |
 | 修改 tier、風險規則或模型 | `docs/modules/routing.md` |
-| 修改 retry、review 或完成條件 | `docs/modules/orchestration.md` |
+| 修改 retry、review 或完成條件；查完整流程圖 | `docs/modules/orchestration.md` |
 | 修改 Pi invocation 或權限 | `docs/modules/pi-adapter.md` |
 | 修改手機 `/orchestrate` 入口 | `docs/modules/mobile-entrypoint.md` |
 | 測試、Git 或部署操作 | `docs/rules/testing-and-safety.md` |

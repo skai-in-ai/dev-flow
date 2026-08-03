@@ -8,28 +8,64 @@
 2. `.orchestrator/` 先加入 repo-local Git exclude。
 3. 除 `.agent/specs/` 外，`git status --porcelain` 必須為空；其他 dirty working tree 直接拒絕啟動。
 4. baseline 記錄目前 `HEAD`；implementer 若改變 HEAD，流程丟出錯誤。
+5. 基礎測試命令必須在乾淨的 baseline 上通過（見下方「預檢」）。
 
 ## 每個 cycle
 
 一個 cycle 是一次完整的 implement → tests → reviewer →（tier 2）final。
 
-```text
-需要實作？
-  yes → isolated implementer（模型依 cycle 階梯，見 routing.md）
-取得 tracked + untracked working diff
-重新 hybrid routing
-執行 deterministic tests
-  fail → 下一 cycle 回 implementer
-isolated reviewer
-  needs_spec（合格）→ 立即 needs_human，不消耗 cycle，回到討論階段
-  escalate 且 tier < 2 → 升 tier，同 cycle 重審，不消耗 cycle
-  escalate 且 tier = 2 → 直接交 Sol final 裁決，不消耗 cycle，不重新實作
-  其餘非 pass → 下一 cycle 回 implementer
-Tier 2 → isolated Sol final reviewer
-  needs_spec（合格）→ 立即 needs_human，不消耗 cycle
-  pass → ready_for_main
-  fail → 下一 cycle 回 implementer
+```mermaid
+flowchart TD
+    Start([handoff / spec]) --> Clean{working tree 乾淨？}
+    Clean -- 否 --> Reject([拒絕啟動])
+    Clean -- 是 --> Pre{baseline 測試預檢}
+    Pre -- 不過 --> PreStop([needs_human<br/>環境或既有程式碼已壞<br/>零模型成本])
+    Pre -- 過 --> Route[hybrid routing<br/>套用 --max-tier 上限]
+
+    Route --> Impl[implementer<br/>模型依 cycle 階梯]
+    Impl --> Diff[取得 working diff<br/>依 diff 重新評估 tier，只升不降]
+    Diff --> Tests{deterministic tests}
+    Tests -- fail --> Rec[記錄 finding] --> Adv
+    Tests -- pass --> Rev[reviewer<br/>artifacts 含 decision_log]
+
+    Rev --> Gap{needs_spec 且<br/>附缺口與 ≥2 候選？}
+    Gap -- 是 --> Human1([needs_human<br/>缺口寫回 spec 未決事項<br/>不消耗 cycle])
+    Gap -- 否 --> Esc{escalate？}
+
+    Esc -- "tier < 上限" --> Up[tier + 1<br/>原地重審，不重新實作] --> Rev
+    Esc -- "已達 --max-tier 上限" --> Human2([needs_human<br/>不靜默放行])
+    Esc -- "tier = 2" --> Final
+    Esc -- 否 --> Pass{verdict = pass？}
+
+    Pass -- 否 --> Rec2[記錄 finding] --> Adv
+    Pass -- "是，tier < 2" --> Ready([ready_for_main])
+    Pass -- "是，tier = 2" --> Final
+
+    Final{Sol final review}
+    Final -- needs_spec --> Human1
+    Final -- fail --> Rec3[記錄 finding] --> Adv
+    Final -- pass --> Ready
+
+    Adv{與上一個 cycle<br/>逐字元相同？}
+    Adv -- 是 --> Stall([needs_human<br/>再修一次也不會變])
+    Adv -- 否 --> Budget{還有修正額度？}
+    Budget -- 有 --> Next[cycle + 1] --> Impl
+    Budget -- 無 --> Human3([needs_human])
+
+    Impl -.->|runtime exception| Failed([failed<br/>寫出含 stderr 與已累積成本的 summary])
+    Rev -.-> Failed
+    Final -.-> Failed
+
+    Ready --> Report[[report.md<br/>決定性渲染]]
+    Human1 --> Report
+    Human2 --> Report
+    Human3 --> Report
+    Stall --> Report
+    Failed --> Report
+    PreStop --> Report
 ```
+
+不消耗 cycle 的路徑：tier escalation、合格的 `needs_spec`、tier 2 的 escalate 交由 Sol 裁決。
 
 ## Cycle 計數
 
