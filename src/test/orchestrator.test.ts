@@ -102,6 +102,7 @@ test("tier 1 finishes after the isolated Luna review without a fixed Sol gate", 
   assert.equal(outcome.status, "ready_for_main");
   assert.deepEqual(agents.calls.map((call) => call.role), ["implementer", "reviewer"]);
   assert.deepEqual(agents.calls[0]?.model, { model: "openai-codex/gpt-5.6-luna", reasoning: "medium" }, "first implementation stays on Luna Medium");
+  assert.equal(agents.calls[0]?.timeoutMs, 25 * 60_000, "implementers get enough wall time for edits and deterministic tests");
   assert.deepEqual(agents.calls[1]?.model, { model: "openai-codex/gpt-5.6-luna", reasoning: "high" });
 });
 

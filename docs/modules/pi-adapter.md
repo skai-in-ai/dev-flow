@@ -12,7 +12,7 @@ pi --mode json --model <model> --thinking <level>
    [--no-tools | --tools <allowlist>] <prompt>
 ```
 
-預設 timeout 為 15 分鐘。Request 先保存為 `request.json`，Pi stdout 保存為 `events.jsonl`。
+adapter 預設 timeout 為 15 分鐘；orchestrator 的 implementer request 明確給 25 分鐘，讓多檔案修改與 deterministic tests 有足夠 wall time。router／reviewer 未覆寫時仍使用 15 分鐘。Request 先保存為 `request.json`，Pi stdout 保存為 `events.jsonl`。
 
 `AgentRunResult` **刻意不回傳原始 events**，只回傳 `sessionMetadata.eventsPath` 指標。events 已經寫在 `events.jsonl`，若同時放進 result，orchestrator 寫 ledger 時會把同一份資料再存一次：實測一次真實 run 因此佔用 527 MB，其中單一 implementer 的 JSON 有 100% 是重複的 events（`summary` 僅 1 KB）。需要原始事件時依指標讀檔。
 
