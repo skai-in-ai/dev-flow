@@ -49,6 +49,21 @@ Tier 2 → isolated Sol final reviewer
 
 log 只收結構化 findings，沒有 findings 時才退回整段 summary，避免歷史被每輪的散文淹沒。implementer 的回應以「每個 cycle 一筆」記錄，因為自由格式敘述無法可靠地機械切分歸屬到個別 finding。
 
+## 紀錄捕捉
+
+判準是「這筆資料不現在記，事後是否永遠補不回來」。屬於這一類的一律在 run 當下寫下；分析層（成本報表、回測查詢、保留政策）不做，等實際跑過幾次、知道要問什麼再說。
+
+| 檔案 | 為什麼非記不可 |
+|:---|:---|
+| `spec.md` | spec 會被流程就地改寫（`approved` → `ready_for_main` 或 `needs_clarification`）。不快照就無從得知這次到底是對著什麼規格跑的 |
+| `cycle-<n>.diff` | 收 `needs_human` 而使用者丟棄 working tree 時，這是唯一的產出紀錄。先前只藏在 reviewer `request.json` 的 artifacts 內 |
+| `cycle-<n>-router/` | classifier session 先前落在 `.orchestrator/router-<epoch>`，散在 run 之外，事後對不回是哪一次 run，成本也歸不了帳 |
+| `../index.jsonl` | 讓「跑過幾次、成功率、每次多少錢、平均幾個 cycle」不必開動輒上百 MB 的 events 檔 |
+
+`index.jsonl` 每行含 `runId`、`startedAt`、`durationMs`、`status`、`tier`、`cycles`/`maxCycles`、依角色分攤的 `cost`、`specPath`、`specTitle`，以及 `needs_spec` 時的缺口摘要。它放在 `.orchestrator/` 而非 `runs/`，因為 `runs/` 應只含 run 目錄，讀取端才能直接 readdir 而不必過濾。
+
+成本由各 agent 的 `usage.cost.total` 累加，格式缺漏時該筆略過而不使整個 run 失敗。
+
 ## 測試來源
 
 Base tests 優先採用 `handoff.tests`；若為空則採用 `RepoConfig.tests`。再合併 effective tier 的 `RepoConfig.testsByTier[tier]` 並去重。命令依序執行，輸出完整保存到 ledger。

@@ -11,7 +11,7 @@ import type { CommandRunner, TestResult } from "../test-runner.js";
 
 const exec = promisify(execFile);
 async function repo(): Promise<string> { const dir = await mkdtemp(join(tmpdir(), "orch-repo-")); await exec("git", ["init"], { cwd: dir }); await exec("git", ["config", "user.email", "test@example.com"], { cwd: dir }); await exec("git", ["config", "user.name", "Test"], { cwd: dir }); await writeFile(join(dir, "a.ts"), "export const a = 1;\n"); await exec("git", ["add", "."], { cwd: dir }); await exec("git", ["commit", "-m", "base"], { cwd: dir }); return dir; }
-class FakeAgents implements AgentRunner { calls: AgentRunRequest[] = []; constructor(private readonly answers: AgentRunResult[]) {} async run(request: AgentRunRequest): Promise<AgentRunResult> { this.calls.push(request); return this.answers.shift() ?? { summary: "VERDICT: pass", verdict: "pass" }; } }
+class FakeAgents implements AgentRunner { calls: AgentRunRequest[] = []; constructor(protected readonly answers: AgentRunResult[]) {} async run(request: AgentRunRequest): Promise<AgentRunResult> { this.calls.push(request); return this.answers.shift() ?? { summary: "VERDICT: pass", verdict: "pass" }; } }
 class PassingTests implements CommandRunner { async run(command: string): Promise<TestResult> { return { command, passed: true, output: "ok", exitCode: 0 }; } }
 async function latestRun(path: string): Promise<string> { const runs = await readdir(join(path, ".orchestrator", "runs")); return runs.sort().at(-1)!; }
 const handoff = (path: string) => ({ repo: path, objective: "normal change", scope: { include: ["a.ts"] }, acceptanceCriteria: ["works"], constraints: [], tests: ["true"], riskNotes: [], delivery: { mode: "direct_main" as const, requireApproval: true } });
@@ -210,4 +210,66 @@ test("a repo may shorten the fix budget", async () => {
   assert.equal(outcome.status, "needs_human");
   assert.equal(outcome.maxCycles, 1);
   assert.equal(agents.calls.filter((call) => call.role === "implementer").length, 1, "no fix may be attempted when the budget is zero");
+});
+
+test("captures what cannot be recovered later: spec snapshot, diff, router session and an index row", async () => {
+  const path = await repo();
+  // spec 會被流程就地改寫，執行當下的原文若不快照就永遠補不回來。
+  const specMarkdown = "---\nstatus: approved\n---\n\n# 當下的規格";
+  const routerCalls: string[] = [];
+  const classifier = { classify: async ({ sessionDir }: { sessionDir: string }) => { routerCalls.push(sessionDir); return { costUsd: 0.001 }; } };
+  // implementer 必須真的改檔案，否則 diff 是空的，測不出「diff 有被完整寫下」。
+  class WritingAgents extends FakeAgents {
+    private edits = 0;
+    override async run(request: AgentRunRequest): Promise<AgentRunResult> {
+      if (request.role === "implementer") { this.edits += 1; await writeFile(join(request.cwd, "a.ts"), `export const a = ${this.edits + 1};\n`); }
+      return super.run(request);
+    }
+  }
+  const agents = new WritingAgents([
+    { summary: "impl", usage: { cost: { total: 0.002 } } },
+    { summary: "no", verdict: "fail", usage: { cost: { total: 0.05 } } },
+    { summary: "impl 2", usage: { cost: { total: 0.003 } } },
+    { summary: "VERDICT: pass", verdict: "pass", usage: { cost: { total: 0.015 } } },
+  ]);
+  const outcome = await new Orchestrator({ agents, tests: new PassingTests(), classifier }).run(
+    handoff(path), () => {}, { specPath: "/somewhere/task.md", specTitle: "當下的規格", specMarkdown },
+  );
+
+  const root = join(path, ".orchestrator", "runs", await latestRun(path));
+  assert.equal(await readFile(join(root, "spec.md"), "utf8"), specMarkdown, "the spec as executed must be snapshotted");
+  assert.ok((await readFile(join(root, "cycle-1.diff"), "utf8")).includes("a.ts"), "each cycle's diff must be a first-class file");
+  await readFile(join(root, "cycle-2.diff"), "utf8");
+
+  // router session 必須落在該次 run 底下，否則事後對不回是哪一次 run。
+  assert.equal(routerCalls.length, 3, "one initial routing plus one per cycle");
+  for (const dir of routerCalls) assert.ok(dir.startsWith(root), `router session must live under the run, got ${dir}`);
+
+  assert.equal(outcome.cost.byRole.implementer, 0.005);
+  assert.equal(outcome.cost.byRole.reviewer, 0.065);
+  assert.equal(outcome.cost.byRole.router, 0.003);
+  assert.equal(outcome.cost.total, 0.073);
+
+  const index = (await readFile(join(path, ".orchestrator", "index.jsonl"), "utf8")).trim().split("\n");
+  const row = JSON.parse(index.at(-1)!) as Record<string, unknown>;
+  assert.equal(row.runId, outcome.runId);
+  assert.equal(row.status, "ready_for_main");
+  assert.equal(row.specTitle, "當下的規格");
+  assert.deepEqual(row.cost, outcome.cost);
+  assert.ok(typeof row.durationMs === "number");
+});
+
+test("the index accumulates one row per run and stays outside runs/", async () => {
+  const path = await repo();
+  for (let i = 0; i < 2; i += 1) {
+    const agents = new FakeAgents([{ summary: "impl" }, { summary: "VERDICT: pass", verdict: "pass" }]);
+    await new Orchestrator({ agents, tests: new PassingTests() }).run(handoff(path), () => {});
+    await exec("git", ["stash", "-u"], { cwd: path }).catch(() => undefined);
+  }
+
+  const index = (await readFile(join(path, ".orchestrator", "index.jsonl"), "utf8")).trim().split("\n");
+  assert.equal(index.length, 2, "每次 run append 一行，不覆寫");
+  // runs/ 只能有 run 目錄，讀取端才能直接 readdir 而不必過濾出檔案。
+  const entries = await readdir(join(path, ".orchestrator", "runs"));
+  assert.ok(entries.every((entry) => !entry.endsWith(".jsonl")), "the index must not sit among the run directories");
 });

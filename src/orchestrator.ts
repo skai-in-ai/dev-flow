@@ -17,19 +17,37 @@ const execFileAsync = promisify(execFile);
 export interface OrchestratorDependencies { agents: AgentRunner; tests: CommandRunner; classifier?: ModelClassifier; config?: RepoConfig; now?: () => Date; }
 /** reviewer 判定「handoff 未定義的產品語意」時交回的內容，供討論階段直接使用。 */
 export interface SpecGap { semantic: string; candidates: string[]; }
-export interface RunOutcome { status: "ready_for_main" | "needs_human" | "failed"; runId: string; tier: Tier; cycles: number; maxCycles: number; routing: RoutingResult; specGap?: SpecGap; }
+export interface RunOutcome { status: "ready_for_main" | "needs_human" | "failed"; runId: string; tier: Tier; cycles: number; maxCycles: number; routing: RoutingResult; specGap?: SpecGap; cost: RunCost; }
+/** 依角色分攤的花費；`total` 含 router。單位為美金。 */
+export interface RunCost { total: number; byRole: Record<string, number> }
+/**
+ * 每次 run 的來源資訊。spec 會被流程就地改寫（status 轉為 ready_for_main 或
+ * needs_clarification），所以執行當下的原文必須快照，否則事後無從得知這次到底
+ * 是對著什麼規格跑的。
+ */
+export interface RunSource { specPath?: string; specTitle?: string; specMarkdown?: string }
 
 export class Orchestrator {
   constructor(private readonly deps: OrchestratorDependencies) {}
-  async run(handoff: Handoff, onProgress: (line: string) => void = console.log): Promise<RunOutcome> {
+  async run(handoff: Handoff, onProgress: (line: string) => void = console.log, source: RunSource = {}): Promise<RunOutcome> {
     const repo = resolve(handoff.repo); const runId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`;
     await excludeLedger(repo);
     const status = await git(repo, ["status", "--porcelain", "--untracked-files=all"]);
     if (meaningfulStatus(status).length) throw new Error("Target repo working tree must be clean before orchestration");
     const root = join(repo, ".orchestrator", "runs", runId); await mkdir(root, { recursive: true });
     const baseline = await git(repo, ["rev-parse", "HEAD"]).catch(() => "unborn");
-    const initial = await hybridRoute(handoff, this.deps.config, this.deps.classifier);
-    await ledger(root, "run.json", { runId, handoff, baseline, initialRouting: initial, startedAt: (this.deps.now?.() ?? new Date()).toISOString() });
+    const startedAt = this.deps.now?.() ?? new Date();
+    const cost: RunCost = { total: 0, byRole: {} };
+    const charge = (role: string, amount: number | undefined): void => {
+      if (!amount) return;
+      cost.byRole[role] = Number(((cost.byRole[role] ?? 0) + amount).toFixed(6));
+      cost.total = Number((cost.total + amount).toFixed(6));
+    };
+    // spec 會被就地改寫，執行當下的原文必須快照。
+    if (source.specMarkdown) await writeFile(join(root, "spec.md"), source.specMarkdown);
+    const initial = await hybridRoute(handoff, this.deps.config, this.deps.classifier, "", join(root, "router-initial"));
+    charge("router", initial.costUsd);
+    await ledger(root, "run.json", { runId, handoff, baseline, initialRouting: initial, startedAt: startedAt.toISOString(), source: { specPath: source.specPath, specTitle: source.specTitle } });
     const maxFixCycles = this.deps.config?.maxFixCycles ?? DEFAULT_MAX_FIX_CYCLES;
     let effective = initial, cycle = 1, implementationNeeded = true, lastFindings: string[] = [];
     let decisionLog: DecisionLog = EMPTY_DECISION_LOG;
@@ -51,12 +69,15 @@ export class Orchestrator {
       if (implementationNeeded) {
         const implementerModel = modelFor(effective.tier, "implementer", cycle);
         const result = await this.deps.agents.run({ role: "implementer", taskId: runId, cwd: repo, sessionDir: join(root, `cycle-${cycle}-implementer`), model: implementerModel, prompt: `Implement this handoff:\n${JSON.stringify(handoff, null, 2)}${lastFindings.length ? `\nFix these findings:\n${lastFindings.join("\n")}` : ""}`, artifacts: { handoff: JSON.stringify(handoff, null, 2), baseline, findings: lastFindings.join("\n"), decision_log: formatDecisionLog(decisionLog) } });
-        await ledger(root, `cycle-${cycle}-implementer.json`, result); onProgress(`Implementer: ${result.summary.slice(0, 160)}`);
+        await ledger(root, `cycle-${cycle}-implementer.json`, result); charge("implementer", costOf(result.usage)); onProgress(`Implementer: ${result.summary.slice(0, 160)}`);
         if (cycle > 1) { decisionLog = appendResponse(decisionLog, { round: cycle - 1, model: implementerModel.model, text: result.summary }); await ledger(root, "decisions.json", decisionLog); }
         if (await git(repo, ["rev-parse", "HEAD"]).then((head) => head.trim()) !== baseline.trim()) throw new Error("Implementer changed HEAD; commit/push is forbidden");
       }
       const diff = await workingDiff(repo);
-      const assessed = await hybridRoute(handoff, this.deps.config, this.deps.classifier, diff);
+      // diff 存成第一級檔案：收 needs_human 而使用者丟棄 working tree 時，這是唯一的產出紀錄。
+      await writeFile(join(root, `cycle-${cycle}.diff`), diff);
+      const assessed = await hybridRoute(handoff, this.deps.config, this.deps.classifier, diff, join(root, `cycle-${cycle}-router`));
+      charge("router", assessed.costUsd);
       const escalated = assessed.tier > effective.tier;
       effective = { ...assessed, tier: Math.max(effective.tier, assessed.tier) as Tier };
       if (escalated) onProgress(`Risk escalation: Tier ${effective.tier}; retaining implementation and strengthening checks.`);
@@ -64,14 +85,14 @@ export class Orchestrator {
       const testCommands = [...new Set([...baseTests, ...(this.deps.config?.testsByTier?.[effective.tier] ?? [])])];
       if (testCommands.length === 0) onProgress("Tests: no deterministic commands configured; reviewers will receive this explicitly.");
       const testResults = await runTests(this.deps.tests, testCommands, repo); await ledger(root, `cycle-${cycle}-tests.json`, testResults);
-      if (testResults.some((test) => !test.passed)) { lastFindings = testResults.filter((test) => !test.passed).map((test) => `${test.command}: ${test.output}`); await record("tests", "deterministic", lastFindings); if (!advance()) return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective); continue; }
+      if (testResults.some((test) => !test.passed)) { lastFindings = testResults.filter((test) => !test.passed).map((test) => `${test.command}: ${test.output}`); await record("tests", "deterministic", lastFindings); if (!advance()) return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source); continue; }
       const artifacts = { handoff: JSON.stringify(handoff, null, 2), diff, tests: formatTests(testResults), repo_rules: await repoRules(repo), decision_log: formatDecisionLog(decisionLog) };
       const reviewerModel = modelFor(effective.tier, "reviewer");
       const review = await this.deps.agents.run({ role: "reviewer", taskId: runId, cwd: repo, sessionDir: join(root, `cycle-${cycle}-reviewer`), model: reviewerModel, prompt: "Review the supplied final diff against the handoff. You are read-only.", artifacts });
-      await ledger(root, `cycle-${cycle}-reviewer.json`, review);
+      await ledger(root, `cycle-${cycle}-reviewer.json`, review); charge("reviewer", costOf(review.usage));
       const verdict = review.verdict ?? "fail";
       const reviewGap = specGap(verdict, review.findings);
-      if (reviewGap) { await record("reviewer", reviewerModel.model, [reviewGap.semantic, ...reviewGap.candidates]); onProgress(`Reviewer reports an undefined product semantic; returning to discussion without consuming a cycle.`); return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, reviewGap); }
+      if (reviewGap) { await record("reviewer", reviewerModel.model, [reviewGap.semantic, ...reviewGap.candidates]); onProgress(`Reviewer reports an undefined product semantic; returning to discussion without consuming a cycle.`); return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source, reviewGap); }
       if (verdict === "escalate" && effective.tier < 2) { effective = { ...effective, tier: (effective.tier + 1) as Tier, reasons: [...effective.reasons, "reviewer escalation"] }; implementationNeeded = false; onProgress(`Reviewer escalated to Tier ${effective.tier}; re-reviewing without reimplementation.`); continue; }
       // 已達最高 tier 仍 escalate：reviewer 說的是「這超出我的判斷」而非「實作有錯」，
       // 正確動作是交給 Sol 裁決，不是叫 implementer 再改一次。不消耗 cycle，不重新實作。
@@ -79,27 +100,51 @@ export class Orchestrator {
       if (deferredToFinal) onProgress("Reviewer escalated at the highest tier; deferring the decision to the final reviewer without consuming a cycle.");
       // pass 與上述 escalate 以外一律走失敗路徑，包含降級的 needs_spec（候選答案不足）。
       // 白名單而非黑名單：新增 verdict 時預設是「不放行」，不會靜默地把不合格的 review 當成通過。
-      if (verdict !== "pass" && !deferredToFinal) { lastFindings = [...(review.findings ?? []), review.summary]; await record("reviewer", reviewerModel.model, signal(review.findings, review.summary)); if (!advance()) return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective); continue; }
+      if (verdict !== "pass" && !deferredToFinal) { lastFindings = [...(review.findings ?? []), review.summary]; await record("reviewer", reviewerModel.model, signal(review.findings, review.summary)); if (!advance()) return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source); continue; }
       if (effective.tier === 2) {
         const finalModel = modelFor(effective.tier, "final_reviewer");
         const final = await this.deps.agents.run({ role: "final_reviewer", taskId: runId, cwd: repo, sessionDir: join(root, `cycle-${cycle}-final`), model: finalModel, prompt: "Perform the final, read-only release review. Verify requirement coverage and risk.", artifacts });
-        await ledger(root, `cycle-${cycle}-final.json`, final);
+        await ledger(root, `cycle-${cycle}-final.json`, final); charge("final_reviewer", costOf(final.usage));
         const finalGap = specGap(final.verdict, final.findings);
-        if (finalGap) { await record("final_reviewer", finalModel.model, [finalGap.semantic, ...finalGap.candidates]); onProgress(`Final reviewer reports an undefined product semantic; returning to discussion without consuming a cycle.`); return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, finalGap); }
-        if ((final.verdict ?? "fail") !== "pass") { lastFindings = [...(final.findings ?? []), final.summary]; await record("final_reviewer", finalModel.model, signal(final.findings, final.summary)); if (!advance()) return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective); continue; }
+        if (finalGap) { await record("final_reviewer", finalModel.model, [finalGap.semantic, ...finalGap.candidates]); onProgress(`Final reviewer reports an undefined product semantic; returning to discussion without consuming a cycle.`); return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source, finalGap); }
+        if ((final.verdict ?? "fail") !== "pass") { lastFindings = [...(final.findings ?? []), final.summary]; await record("final_reviewer", finalModel.model, signal(final.findings, final.summary)); if (!advance()) return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source); continue; }
       }
-      return this.finish(root, "ready_for_main", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective);
+      return this.finish(root, "ready_for_main", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source);
     }
-    return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective);
+    return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source);
   }
-  private async finish(root: string, status: RunOutcome["status"], runId: string, tier: Tier, cycles: number, maxCycles: number, routing: RoutingResult, gap?: SpecGap): Promise<RunOutcome> {
-    const outcome: RunOutcome = { status, runId, tier, cycles, maxCycles, routing, ...(gap ? { specGap: gap } : {}) };
+  private async finish(root: string, status: RunOutcome["status"], runId: string, tier: Tier, cycles: number, maxCycles: number, routing: RoutingResult, cost: RunCost, startedAt: Date, source: RunSource, gap?: SpecGap): Promise<RunOutcome> {
+    const outcome: RunOutcome = { status, runId, tier, cycles, maxCycles, routing, cost, ...(gap ? { specGap: gap } : {}) };
     await ledger(root, "summary.json", outcome);
-    await writeFile(join(root, "summary.md"), `# ${status}\n\nTier: ${tier}\nCycles: ${cycles}/${maxCycles}\n${gap ? `\n${renderSpecGap(gap)}` : ""}`);
+    const money = `US$${cost.total.toFixed(5)}`;
+    await writeFile(join(root, "summary.md"), `# ${status}\n\nTier: ${tier}\nCycles: ${cycles}/${maxCycles}\nCost: ${money}\n${gap ? `\n${renderSpecGap(gap)}` : ""}`);
+    await appendIndex(root, {
+      runId, startedAt: startedAt.toISOString(),
+      durationMs: Math.max(0, (this.deps.now?.() ?? new Date()).getTime() - startedAt.getTime()),
+      status, tier, cycles, maxCycles, cost,
+      specPath: source.specPath, specTitle: source.specTitle,
+      specGap: gap ? gap.semantic : undefined,
+    });
     return outcome;
   }
 }
 async function ledger(root: string, name: string, value: unknown): Promise<void> { await writeFile(join(root, name), `${JSON.stringify(value, null, 2)}\n`); }
+/** Pi usage 的成本欄位；缺漏時回傳 undefined，不讓統計因格式變動而爆掉。 */
+export function costOf(usage: Record<string, unknown> | undefined): number | undefined {
+  const total = (usage?.cost as { total?: unknown } | undefined)?.total;
+  return typeof total === "number" && Number.isFinite(total) ? total : undefined;
+}
+/**
+ * 每次 run 結束時 append 一行到 `.orchestrator/index.jsonl`。
+ *
+ * 放在 `runs/` 之外，因為 `runs/` 應該只含 run 目錄，讀取端才能直接 readdir 而不必過濾。
+ * 目的是讓「跑過幾次、成功率、每次多少錢、平均幾個 cycle」不必開動輒上百 MB 的 events 檔。
+ * 這裡只捕捉資料，不做分析；報表與保留政策等實際跑過幾次、知道要問什麼再做。
+ */
+export async function appendIndex(root: string, entry: Record<string, unknown>): Promise<void> {
+  const path = join(dirname(dirname(root)), "index.jsonl");
+  await appendFile(path, `${JSON.stringify(entry)}\n`);
+}
 async function git(cwd: string, args: string[]): Promise<string> { const { stdout } = await execFileAsync("git", args, { cwd }); return stdout; }
 async function workingDiff(repo: string): Promise<string> {
   const tracked = await git(repo, ["diff", "--", ".", ":(exclude).orchestrator/**", ":(exclude).agent/specs/**"]);

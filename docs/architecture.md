@@ -71,7 +71,10 @@ sequenceDiagram
     ├── cycle-<n>-tests.json
     ├── cycle-<n>-reviewer.json
     ├── cycle-<n>-final.json       # Tier 2 才有
+    ├── spec.md                    # 執行當下的 spec 快照（spec 會被就地改寫）
     ├── decisions.json             # 跨 cycle 累積的 findings 與 implementer 回應
+    ├── cycle-<n>.diff             # 該 cycle 的完整 diff，第一級檔案
+    ├── cycle-<n>-router/          # classifier session，歸屬於本次 run
     ├── summary.json
     └── summary.md
 ```
