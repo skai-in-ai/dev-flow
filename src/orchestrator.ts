@@ -25,7 +25,17 @@ export interface RunCost { total: number; byRole: Record<string, number> }
  * needs_clarification），所以執行當下的原文必須快照，否則事後無從得知這次到底
  * 是對著什麼規格跑的。
  */
-export interface RunSource { specPath?: string; specTitle?: string; specMarkdown?: string }
+export interface RunSource { specPath?: string; specTitle?: string; specMarkdown?: string; maxTier?: Tier }
+
+export function applyTierCap<T extends RoutingResult>(routing: T, maxTier: Tier | undefined): T {
+  if (maxTier === undefined || routing.tier <= maxTier) return routing;
+  return {
+    ...routing,
+    tier: maxTier,
+    reasons: [...routing.reasons, `operator max-tier cap applied: ${maxTier}`],
+    riskFlags: [...routing.riskFlags, `tier capped from ${routing.tier} to ${maxTier}`],
+  } as T;
+}
 
 export class Orchestrator {
   constructor(private readonly deps: OrchestratorDependencies) {}
@@ -45,9 +55,9 @@ export class Orchestrator {
     };
     // spec 會被就地改寫，執行當下的原文必須快照。
     if (source.specMarkdown) await writeFile(join(root, "spec.md"), source.specMarkdown);
-    const initial = await hybridRoute(handoff, this.deps.config, this.deps.classifier, "", join(root, "router-initial"));
+    const initial = applyTierCap(await hybridRoute(handoff, this.deps.config, this.deps.classifier, "", join(root, "router-initial")), source.maxTier);
     charge("router", initial.costUsd);
-    await ledger(root, "run.json", { runId, handoff, baseline, initialRouting: initial, startedAt: startedAt.toISOString(), source: { specPath: source.specPath, specTitle: source.specTitle } });
+    await ledger(root, "run.json", { runId, handoff, baseline, initialRouting: initial, startedAt: startedAt.toISOString(), source: { specPath: source.specPath, specTitle: source.specTitle, maxTier: source.maxTier } });
     const maxFixCycles = this.deps.config?.maxFixCycles ?? DEFAULT_MAX_FIX_CYCLES;
     let effective = initial, cycle = 1, implementationNeeded = true, lastFindings: string[] = [];
     let decisionLog: DecisionLog = EMPTY_DECISION_LOG;
@@ -76,7 +86,7 @@ export class Orchestrator {
       const diff = await workingDiff(repo);
       // diff 存成第一級檔案：收 needs_human 而使用者丟棄 working tree 時，這是唯一的產出紀錄。
       await writeFile(join(root, `cycle-${cycle}.diff`), diff);
-      const assessed = await hybridRoute(handoff, this.deps.config, this.deps.classifier, diff, join(root, `cycle-${cycle}-router`));
+      const assessed = applyTierCap(await hybridRoute(handoff, this.deps.config, this.deps.classifier, diff, join(root, `cycle-${cycle}-router`)), source.maxTier);
       charge("router", assessed.costUsd);
       const escalated = assessed.tier > effective.tier;
       effective = { ...assessed, tier: Math.max(effective.tier, assessed.tier) as Tier };
@@ -93,7 +103,13 @@ export class Orchestrator {
       const verdict = review.verdict ?? "fail";
       const reviewGap = specGap(verdict, review.findings);
       if (reviewGap) { await record("reviewer", reviewerModel.model, [reviewGap.semantic, ...reviewGap.candidates]); onProgress(`Reviewer reports an undefined product semantic; returning to discussion without consuming a cycle.`); return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source, reviewGap); }
-      if (verdict === "escalate" && effective.tier < 2) { effective = { ...effective, tier: (effective.tier + 1) as Tier, reasons: [...effective.reasons, "reviewer escalation"] }; implementationNeeded = false; onProgress(`Reviewer escalated to Tier ${effective.tier}; re-reviewing without reimplementation.`); continue; }
+      if (verdict === "escalate" && effective.tier < 2 && (source.maxTier === undefined || effective.tier < source.maxTier)) { effective = applyTierCap({ ...effective, tier: (effective.tier + 1) as Tier, reasons: [...effective.reasons, "reviewer escalation"] }, source.maxTier); implementationNeeded = false; onProgress(`Reviewer escalated to Tier ${effective.tier}; re-reviewing without reimplementation.`); continue; }
+      if (verdict === "escalate" && source.maxTier !== undefined && effective.tier >= source.maxTier && source.maxTier < 2) {
+        const finding = `reviewer requested escalation beyond operator max-tier cap ${source.maxTier}`;
+        await record("reviewer", reviewerModel.model, [finding]);
+        onProgress(`Reviewer escalation blocked by --max-tier ${source.maxTier}; returning for human review.`);
+        return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source);
+      }
       // 已達最高 tier 仍 escalate：reviewer 說的是「這超出我的判斷」而非「實作有錯」，
       // 正確動作是交給 Sol 裁決，不是叫 implementer 再改一次。不消耗 cycle，不重新實作。
       const deferredToFinal = verdict === "escalate";

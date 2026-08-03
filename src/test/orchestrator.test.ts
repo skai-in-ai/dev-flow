@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { excludeLedger, formatTests, meaningfulStatus, Orchestrator } from "../orchestrator.js";
+import { applyTierCap, excludeLedger, formatTests, meaningfulStatus, Orchestrator } from "../orchestrator.js";
 import type { AgentRunner, AgentRunRequest, AgentRunResult } from "../agents/contracts.js";
 import type { CommandRunner, TestResult } from "../test-runner.js";
 
@@ -20,6 +20,25 @@ test("review escalation upgrades checks without re-running implementation or con
   const path = await repo(); const agents = new FakeAgents([{ summary: "implemented" }, { summary: "VERDICT: escalate", verdict: "escalate" }, { summary: "VERDICT: pass", verdict: "pass" }, { summary: "VERDICT: pass", verdict: "pass" }]);
   const outcome = await new Orchestrator({ agents, tests: new PassingTests() }).run(handoff(path), () => {});
   assert.equal(outcome.status, "ready_for_main"); assert.equal(outcome.cycles, 1); assert.equal(agents.calls.filter((x) => x.role === "implementer").length, 1); assert.deepEqual(agents.calls[2]?.model, { model: "openai-codex/gpt-5.6-terra", reasoning: "medium" });
+});
+test("max-tier cap clamps high-risk routing and blocks reviewer escalation without silently passing", async () => {
+  const path = await repo();
+  const agents = new FakeAgents([{ summary: "implemented" }, { summary: "needs stronger review", verdict: "escalate" }]);
+  const outcome = await new Orchestrator({ agents, tests: new PassingTests() }).run(
+    { ...handoff(path), objective: "add database schema migration" },
+    () => {},
+    { maxTier: 1 },
+  );
+  assert.equal(outcome.status, "needs_human");
+  assert.equal(outcome.tier, 1);
+  assert.match(outcome.routing.reasons.join("\n"), /max-tier cap applied: 1/);
+  assert.deepEqual(agents.calls.map((call) => call.role), ["implementer", "reviewer"]);
+});
+
+test("applyTierCap leaves uncapped routing unchanged", () => {
+  const routing = { tier: 2 as const, confidence: 0.9, reasons: ["risk"], riskFlags: ["db"] };
+  assert.equal(applyTierCap(routing, undefined), routing);
+  assert.equal(applyTierCap(routing, 1).tier, 1);
 });
 test("the last fix is reviewed before a human is asked for", async () => {
   const path = await repo(); const agents = new FakeAgents([{ summary: "impl" }, { summary: "bad", verdict: "fail" }, { summary: "impl" }, { summary: "bad", verdict: "fail" }, { summary: "impl" }, { summary: "bad", verdict: "fail" }, { summary: "impl" }, { summary: "bad", verdict: "fail" }]);

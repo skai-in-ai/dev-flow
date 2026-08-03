@@ -64,3 +64,4 @@ repo 內含 extension：`extensions/orchestrate.ts`。主 session 的管理者�
 ```
 
 它會非阻塞啟動 CLI 並將進度顯示於 Pi；仍只會停在 `ready_for_main` 或 `needs_human`。
+要限制單次流程的模型成本，可顯式設定 tier 上限：`bin/dev-flow --max-tier 1 path/to/spec.md`。若 reviewer 要求超過上限的審查，流程會回到 `needs_human`，不會靜默放行或自動升到 Tier 2；未指定時維持原有風險路由。
