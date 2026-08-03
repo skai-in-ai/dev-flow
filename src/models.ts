@@ -10,9 +10,10 @@ const codex = (name: string, reasoning: ModelSelection["reasoning"]): ModelSelec
  * （單次約 1/3 價），並整個略過 Sol final，實測單次 run 從 $0.10~$0.21 降到約 $0.023。
  * 同批資料裡 Luna High 的 findings 有嚴重度分級與 file:line 引用，看不出品質降級。
  *
- * 接受的取捨：Sol 曾在四次 final review 中攔下兩次 Terra 已放行的問題，壓到 tier 1
- * 等於放棄那道網。這是刻意的：流程停在 `ready_for_main`，實際把關的是人工 merge 前的
- * diff 檢查。真的動到金流或下單時再手動 `--max-tier 2`。
+ * 這不等於放棄 Sol 那道網，而是把它移到更划算的位置：流程停在 `ready_for_main` 之後，
+ * 由迴圈外的一個 Sol Low 讀最終 diff 與 report 並提出處置，人只做關鍵裁決。同一道 gate
+ * 從「每個 cycle 跑一次中間態」變成「整個 run 結束後跑一次最終版」，更便宜也審得更準。
+ * 真的動到金流或下單時再手動 `--max-tier 2`，把 gate 拉回迴圈內。
  */
 export const DEFAULT_MAX_TIER: Tier = 1;
 

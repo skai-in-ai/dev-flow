@@ -28,7 +28,7 @@ Classifier 使用 Luna Medium，且以 `--no-tools` 啟動。Prompt 明確要求
 
 實測依據（2026-08-03，8 個真實 run）：review 佔總支出 79%（reviewer 44%、Sol final 35%），implementer 只佔 16%。上限壓到 1 會把 reviewer 從 Terra Medium 換成 Luna High（單次約 1/3 價）並整個略過 Sol final，實測單次 run 從 $0.10~$0.21 降到約 $0.023。同批資料中 Luna High 的 findings 有嚴重度分級與 file:line 引用，看不出品質降級。
 
-接受的取捨：Sol 曾在四次 final review 中攔下兩次 Terra 已放行的問題。壓到 tier 1 等於放棄那道網，實際把關的是流程停在 `ready_for_main` 之後的人工 diff 檢查。動到金流或下單時手動指定 `--max-tier 2`。
+Sol 曾在四次 final review 中攔下兩次 Terra 已放行的問題，所以那道網有價值。壓到 tier 1 不是放棄它，而是把它移到迴圈外：流程停在 `ready_for_main` 之後，由外層的一個 Sol Low 讀最終 diff 與 `report.md` 並提出處置，人只做關鍵裁決。同一道 gate 從「每個 cycle 審一次中間態」變成「整個 run 結束後審一次最終版」，更便宜，而且審的對象更正確。動到金流或下單時手動指定 `--max-tier 2`，把 gate 拉回迴圈內。
 
 **tier 上限同時約束 implementer 階梯**：`maxTier < 2` 時 implementer 永遠不升到 Terra。舊行為只約束 reviewer，於是設了上限的 run 在 cycle 4 仍會叫出 Terra，天花板等於沒設。
 
