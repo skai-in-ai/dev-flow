@@ -27,9 +27,26 @@ handoff → hybrid route → implement → actual-diff risk scan → tests → i
 
 ## 成本
 
-模型透過 Pi 呼叫，目前對應到 `openai-codex/gpt-5.6-{luna,terra,sol}` 三個級距（`src/models.ts`）。以下是 2026-08-03 在單一 codebase 上 8 個真實 run 的實測，不是 benchmark，換一種任務或 codebase 數字會不一樣，但支出的**結構**應該是類似的。
+模型透過 Pi 呼叫，目前對應到 `openai-codex/gpt-5.6-{luna,terra,sol}` 三個級距（`src/models.ts`）。
 
-### 錢花在哪裡
+### 改版前後
+
+| | 改版前 | 改版後 tier 2 | 改版後 tier 1（預設） |
+|:---|:---|:---|:---|
+| implementer 首次 | Luna High | Luna Medium | Luna Medium |
+| implementer 後續 | 第 2 輪起 Terra Medium | cycle 2~3 Luna High，cycle 4 才 Terra | Luna High，不升 Terra |
+| reviewer | Terra Medium | Terra Medium | Luna High |
+| final reviewer | Sol Medium，**迴圈內每輪** | Sol Medium | Sol Low，**迴圈外一次** |
+| 上限 | 3 rounds | 4 cycles | 4 cycles |
+| 單次 run 成本 | 約 $0.195 | $0.10 ~ $0.21 | **約 $0.023** |
+
+**先講這個比較不是什麼。** 左欄是改版前一次真實 run 的實際帳單（Luna $0.004、Terra 合計 $0.126、Sol $0.065），樣本數 1；右兩欄是 2026-08-03 在單一 codebase 上 8 個 run 的實測範圍。任務不同、樣本數不同，這不是對照實驗，別把 8.5 倍當成可複製的 benchmark。
+
+**但結構上的因果是清楚的，而且分兩段發生。**
+
+第一段是改版本身。它把 implementer 的模型階梯從「看 tier」改成「只看 cycle」，首次實作降為 Luna Medium，Terra 推遲到第四次修正才出場。這確實省了錢，但省得不多，因為 implementer 本來就只佔總支出的 16%。
+
+第二段才是主戲。改版順帶讓每個 run 的支出可以被拆解記錄，量測完才發現錢的分佈跟直覺相反：
 
 | 階段 | 佔總支出 |
 |:---|:---|
@@ -37,18 +54,15 @@ handoff → hybrid route → implement → actual-diff risk scan → tests → i
 | final reviewer（Sol） | 35% |
 | implementer | 16% |
 
-這個分佈是反直覺的地方，也是整個成本設計的起點：**審查佔 79%，實作只佔 16%**。直覺會想省實作，但實作本來就不貴。
+審查佔 79%。於是預設值從「盡量省實作」改成「把 reviewer 換成 Luna High，並把 Sol 移出迴圈」，那才是 $0.195 掉到 $0.023 的主因。
 
-### tier 上限的效果
+換句話說，降本不是改版直接帶來的，是**改版讓成本變得可量測，量測改變了預設值**。這也是為什麼上面每個數字都標了量測日期與 run 數：換一批任務就該重測，數字沒有出處就只是行銷文案。
 
-| `--max-tier` | 單次 run | reviewer | final reviewer |
-|:---|:---|:---|:---|
-| 1（預設） | 約 $0.023 | Luna High | Sol Low |
-| 2 | $0.10 ~ $0.21 | Terra Medium | Sol Medium |
+### 便宜的 reviewer 有沒有變差
 
-差距接近一個數量級，來自兩件事：reviewer 從 Terra Medium 換成 Luna High（單次約 1/3 價），以及迴圈內不再每個 cycle 都跑 Sol final。
+這是把預設值壓到 tier 1 之前唯一該問的問題。同一批資料裡，Luna High 的 findings 仍有嚴重度分級與 `file:line` 引用，看不出品質降級。這是預設值定在 tier 1 的依據，不是因為它便宜就選它。
 
-同一批資料裡，Luna High 的 findings 仍有嚴重度分級與 `file:line` 引用，看不出品質降級。這是預設值定在 tier 1 的依據。
+這也是本節唯一沒有數字支撐的判斷：「看不出降級」是人讀過 findings 之後的評估，不是量測出來的。要真的證明它，需要一組已知缺陷的任務去比對兩種 reviewer 的召回率，目前沒有做。
 
 ### 這不等於放棄那道 gate
 
