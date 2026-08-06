@@ -1,18 +1,34 @@
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { access, appendFile, mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
-import { resolve, relative } from "node:path";
+import { homedir } from "node:os";
+import { resolve, relative, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 /**
- * 兩個路徑都可用環境變數覆寫，預設值刻意對應「從 workspace 根目錄啟動 pi、
- * orchestrator 就 clone 在它底下」這個最常見的擺法，讓零設定也能跑起來。
- * - AGENT_ORCHESTRATOR_WORKSPACE_ROOT：可被分派的 repo 必須位於此目錄下（安全邊界）。
- * - AGENT_ORCHESTRATOR_HOME：本 orchestrator repo 的位置，npm run orchestrate 在此執行。
+ * 沒有任何路徑依賴 pi 的啟動目錄，因此從哪裡呼叫都一樣。
+ *
+ * - ORCHESTRATOR：由本檔案自己的位置推導（Node 預設會解開 symlink，因此
+ *   從 <workspace>/.pi/extensions 連過來也會指回 repo 本體）。
+ *   複製而非連結、導致推導不到 repo 時，可用 AGENT_ORCHESTRATOR_HOME 指定。
+ * - STATE_ROOT：session pointer 放在使用者家目錄，與 cwd 無關。
+ * - WORKSPACE_ROOT：選用的安全邊界。設了就限制只能分派該目錄下的 repo；
+ *   不設則不限制目錄，只要求目標是 Git repo，相對名稱以呼叫端 cwd 解析。
  */
-const WORKSPACE_ROOT = resolve(process.env.AGENT_ORCHESTRATOR_WORKSPACE_ROOT ?? process.cwd());
-const ORCHESTRATOR = resolve(process.env.AGENT_ORCHESTRATOR_HOME ?? resolve(WORKSPACE_ROOT, "agent-orchestrator"));
-const POINTER_ROOT = resolve(WORKSPACE_ROOT, ".pi/agent-orchestrator");
+const SELF_DIR = dirname(fileURLToPath(import.meta.url));
+function looksLikeOrchestrator(path: string): boolean { return existsSync(resolve(path, "package.json")) && existsSync(resolve(path, "src/cli.ts")); }
+const DERIVED_HOME = resolve(SELF_DIR, "..");
+const ORCHESTRATOR_ENV = process.env.AGENT_ORCHESTRATOR_HOME;
+const ORCHESTRATOR = ORCHESTRATOR_ENV ? resolve(ORCHESTRATOR_ENV) : DERIVED_HOME;
+const STATE_ROOT = resolve(process.env.AGENT_ORCHESTRATOR_STATE_DIR ?? resolve(homedir(), ".pi/agent-orchestrator"));
+const WORKSPACE_ROOT = process.env.AGENT_ORCHESTRATOR_WORKSPACE_ROOT ? resolve(process.env.AGENT_ORCHESTRATOR_WORKSPACE_ROOT) : undefined;
+const POINTER_ROOT = STATE_ROOT;
+function assertOrchestratorHome(): string {
+	if (looksLikeOrchestrator(ORCHESTRATOR)) return ORCHESTRATOR;
+	throw new Error(`Could not locate the agent-orchestrator repo at ${ORCHESTRATOR}. Set AGENT_ORCHESTRATOR_HOME to its absolute path.`);
+}
 type Pointer = { repo: string; specPath: string; updatedAt: string };
 type DevFlowRequest = { requestId: string; requestedAt: string };
 const DEV_FLOW_MARKER = "[agent-orchestrator-dev-flow:";
@@ -22,10 +38,15 @@ export function parseOrchestrateArgs(args: string): { kind: "handoff"; path: str
 	if (trimmed.endsWith(".json")) return { kind: "handoff", path: trimmed };
 	const [repo, ...objective] = trimmed.split(/\s+/); return repo && objective.length ? { kind: "draft", repo, objective: objective.join(" ") } : { kind: "invalid" };
 }
-function withinWorkspace(path: string): boolean { const value = relative(WORKSPACE_ROOT, path); return value !== "" && !value.startsWith("..") && !value.includes("../"); }
+/** 未設定 WORKSPACE_ROOT 時不限制目錄，一律視為在界內。 */
+function withinWorkspace(path: string): boolean {
+	if (!WORKSPACE_ROOT) return true;
+	const value = relative(WORKSPACE_ROOT, path); return value !== "" && !value.startsWith("..") && !value.includes("../");
+}
 function resolvedRepo(input: string, cwd: string): string {
-	const repo = resolve(input.startsWith("/") ? input : input === "." ? cwd : resolve(WORKSPACE_ROOT, input));
-	if (!withinWorkspace(repo)) throw new Error(`repo must be under ${WORKSPACE_ROOT} (set AGENT_ORCHESTRATOR_WORKSPACE_ROOT to change this)`);
+	const base = WORKSPACE_ROOT ?? cwd;
+	const repo = resolve(input.startsWith("/") ? input : input === "." ? cwd : resolve(base, input));
+	if (!withinWorkspace(repo)) throw new Error(`repo must be under ${WORKSPACE_ROOT} (unset AGENT_ORCHESTRATOR_WORKSPACE_ROOT to allow any Git repo)`);
 	return repo;
 }
 async function exists(path: string): Promise<boolean> { return access(path).then(() => true).catch(() => false); }
@@ -34,8 +55,8 @@ async function ensureLedgerExcluded(repo: string): Promise<void> {
 	const exclude = resolve(repo, ".git/info/exclude"); const current = await readFile(exclude, "utf8").catch(() => "");
 	if (!current.split("\n").includes(".orchestrator/")) await appendFile(exclude, `${current.endsWith("\n") || !current ? "" : "\n"}.orchestrator/\n`);
 }
-export async function createDraft(repoInput: string, objective: string): Promise<string> {
-	const repo = resolvedRepo(repoInput, WORKSPACE_ROOT); await assertRepo(repo); await ensureLedgerExcluded(repo); const dir = resolve(repo, ".orchestrator/handoffs"); await mkdir(dir, { recursive: true });
+export async function createDraft(repoInput: string, objective: string, cwd: string): Promise<string> {
+	const repo = resolvedRepo(repoInput, cwd); await assertRepo(repo); await ensureLedgerExcluded(repo); const dir = resolve(repo, ".orchestrator/handoffs"); await mkdir(dir, { recursive: true });
 	const packageJson = await readFile(resolve(repo, "package.json"), "utf8").then(JSON.parse).catch(() => ({}));
 	const scripts = packageJson.scripts ?? {}; const tests = ["test", "build"].filter((name) => typeof scripts[name] === "string").map((name) => `npm run ${name}`);
 	const path = resolve(dir, `${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
@@ -71,7 +92,7 @@ export function shouldAutoStartDevFlow(pendingDevFlow: boolean, status: string, 
 }
 async function requestDevFlow(sessionId: string, cwd: string): Promise<DevFlowRequest> {
 	const resolvedCwd = resolve(cwd);
-	if (resolvedCwd !== WORKSPACE_ROOT && !withinWorkspace(resolvedCwd)) throw new Error(`/dev-flow must run from ${WORKSPACE_ROOT} or a directory under it (set AGENT_ORCHESTRATOR_WORKSPACE_ROOT to change this)`);
+	if (WORKSPACE_ROOT && resolvedCwd !== WORKSPACE_ROOT && !withinWorkspace(resolvedCwd)) throw new Error(`/dev-flow must run from ${WORKSPACE_ROOT} or a directory under it (unset AGENT_ORCHESTRATOR_WORKSPACE_ROOT to allow any directory)`);
 	const request: DevFlowRequest = { requestId: requestId(), requestedAt: new Date().toISOString() };
 	await mkdir(resolve(POINTER_ROOT, "sessions"), { recursive: true });
 	await writeFile(devFlowPendingPath(sessionId), `${JSON.stringify(request)}\n`);
@@ -91,7 +112,9 @@ async function latestApprovedSpec(cwd: string): Promise<string | undefined> {
 	for (const name of names) { const path = resolve(directory, name); if ((await readFile(path, "utf8")).match(/^status:\s*approved\s*$/m)) return path; }
 }
 function run(commandArgs: string[], ctx: { ui: { notify(message: string, level?: "info" | "warning" | "error"): void } }): void {
-	const child = spawn("npm", ["run", "orchestrate", "--", ...commandArgs], { cwd: ORCHESTRATOR, stdio: ["ignore", "pipe", "pipe"] }); let done = false;
+	let home: string;
+	try { home = assertOrchestratorHome(); } catch (error) { ctx.ui.notify(error instanceof Error ? error.message : String(error), "error"); return; }
+	const child = spawn("npm", ["run", "orchestrate", "--", ...commandArgs], { cwd: home, stdio: ["ignore", "pipe", "pipe"] }); let done = false;
 	const notify = (chunk: unknown, level: "info" | "error") => { const text = String(chunk).trim(); if (text) ctx.ui.notify(text, level); };
 	child.stdout.on("data", (chunk) => notify(chunk, "info")); child.stderr.on("data", (chunk) => notify(chunk, "error"));
 	child.on("error", (error) => { if (!done) { done = true; ctx.ui.notify(error.message, "error"); } }); child.on("close", (code) => { if (!done) { done = true; ctx.ui.notify(code === 0 ? "Orchestrator finished." : `Orchestrator stopped: ${code}`, code === 0 ? "info" : "error"); } });
@@ -99,7 +122,7 @@ function run(commandArgs: string[], ctx: { ui: { notify(message: string, level?:
 
 function createSaveSpecTool() { return defineTool({
 	name: "save_agent_spec", label: "Save agent spec", description: "Save the agreed development spec and set it as the current session pointer. Use after discussion; set status to approved only when unresolvedItems is empty and the user has confirmed it.", promptSnippet: "Save an agreed development spec for the later /dev workflow.", promptGuidelines: ["When the user says「把結論整理成 spec」or asks to save a spec, call save_agent_spec instead of merely describing a spec in chat.", "Write status: approved only after the user has confirmed the decision and unresolvedItems is empty.", "testRequirements must be raw executable shell commands only, such as npm test or npm run build; never write prose such as「在目標 repo 執行 npm test」.", "When invoked by /dev-flow, an approved spec starts the workflow automatically. Do not start implementation yourself or ask the user to enter /dev."],
-	parameters: Type.Object({ repo: Type.String({ description: `Target repo name under the workspace root (${WORKSPACE_ROOT}), or its absolute path` }), title: Type.String(), status: Type.Union([Type.Literal("draft"), Type.Literal("approved"), Type.Literal("needs_clarification")]), objective: Type.String(), backgroundAndDecisions: Type.String(), modificationScope: Type.Array(Type.String()), excludedScope: Type.Array(Type.String()), acceptanceCriteria: Type.Array(Type.String()), testRequirements: Type.Array(Type.String({ description: "Raw executable shell command only, e.g. npm test; never natural-language prose" })), risks: Type.Array(Type.String()), unresolvedItems: Type.Array(Type.String()) }),
+	parameters: Type.Object({ repo: Type.String({ description: WORKSPACE_ROOT ? `Target repo name under the workspace root (${WORKSPACE_ROOT}), or its absolute path` : "Absolute path to the target Git repo, or a name/relative path resolved against the current working directory" }), title: Type.String(), status: Type.Union([Type.Literal("draft"), Type.Literal("approved"), Type.Literal("needs_clarification")]), objective: Type.String(), backgroundAndDecisions: Type.String(), modificationScope: Type.Array(Type.String()), excludedScope: Type.Array(Type.String()), acceptanceCriteria: Type.Array(Type.String()), testRequirements: Type.Array(Type.String({ description: "Raw executable shell command only, e.g. npm test; never natural-language prose" })), risks: Type.Array(Type.String()), unresolvedItems: Type.Array(Type.String()) }),
 	async execute(_id: string, params: any, _signal: AbortSignal, _update: unknown, ctx: { cwd: string; sessionManager: { getSessionId(): string }; ui: { notify(message: string, level?: "info" | "warning" | "error"): void } }) {
 		const sessionId = ctx.sessionManager.getSessionId();
 		try {
@@ -146,6 +169,6 @@ export default function (pi: ExtensionAPI) {
 		ctx.ui.notify(`Starting from spec: ${specPath}`, "info"); run(["--spec", specPath], ctx);
 	} });
 	pi.registerCommand("orchestrate", { description: "Run isolated dev → review flow from handoff JSON", handler: async (args, ctx) => {
-		try { const parsed = parseOrchestrateArgs(args); if (parsed.kind === "invalid") { ctx.ui.notify("Usage: /orchestrate /absolute/path/handoff.json OR /orchestrate <repo-path-without-spaces> <objective>", "error"); return; } const handoff = parsed.kind === "handoff" ? resolve(parsed.path) : await createDraft(parsed.repo, parsed.objective); ctx.ui.notify(`Using handoff: ${handoff}`, "info"); run(["--handoff", handoff], ctx); } catch (error) { ctx.ui.notify(error instanceof Error ? error.message : String(error), "error"); }
+		try { const parsed = parseOrchestrateArgs(args); if (parsed.kind === "invalid") { ctx.ui.notify("Usage: /orchestrate /absolute/path/handoff.json OR /orchestrate <repo-path-without-spaces> <objective>", "error"); return; } const handoff = parsed.kind === "handoff" ? resolve(parsed.path) : await createDraft(parsed.repo, parsed.objective, ctx.cwd); ctx.ui.notify(`Using handoff: ${handoff}`, "info"); run(["--handoff", handoff], ctx); } catch (error) { ctx.ui.notify(error instanceof Error ? error.message : String(error), "error"); }
 	} });
 }

@@ -4,14 +4,15 @@
 
 ## 環境變數
 
-兩個路徑都由環境變數決定，未設定時採用預設值：
+Extension 用到的路徑全部可由環境變數覆寫：
 
 | 變數 | 預設 | 用途 |
 |:---|:---|:---|
-| `AGENT_ORCHESTRATOR_WORKSPACE_ROOT` | 啟動 Pi 時的 `process.cwd()` | 可被分派的 repo 必須位於此目錄下，是 extension 的安全邊界 |
-| `AGENT_ORCHESTRATOR_HOME` | `<workspace root>/agent-orchestrator` | 本 repo 位置，`npm run orchestrate` 在此執行 |
+| `AGENT_ORCHESTRATOR_HOME` | 由 extension 檔案自身位置推導（Node 會解開 symlink） | 本 repo 位置，`npm run orchestrate` 在此執行。只有在「複製而非連結」extension 時才需設定 |
+| `AGENT_ORCHESTRATOR_STATE_DIR` | `~/.pi/agent-orchestrator` | session pointer 的存放處 |
+| `AGENT_ORCHESTRATOR_WORKSPACE_ROOT` | 未設定 | **選用的安全邊界**。設了就只允許分派該目錄下的 repo；不設則不限制目錄，只要求目標是 Git repo，相對名稱以呼叫端 cwd 解析 |
 
-預設值對應「從 workspace 根目錄啟動 Pi、orchestrator clone 在它底下」這個擺法；其他擺法請顯式設定。
+三者都與 pi 的啟動目錄無關，因此從任何位置呼叫 `/dev-flow` 行為都一致。
 
 ## 部署位置
 
@@ -24,7 +25,7 @@ $AGENT_ORCHESTRATOR_HOME/extensions/orchestrate.ts
 Pi project extension：
 
 ```text
-$AGENT_ORCHESTRATOR_WORKSPACE_ROOT/.pi/extensions/orchestrate.ts
+<你放 pi extension 的目錄>/.pi/extensions/orchestrate.ts
 ```
 
 目前使用 symlink，因此 repo 內 extension 更新後，Pi 執行 `/reload` 即可載入新版本。
@@ -58,12 +59,12 @@ Extension 會立即通知 handoff 路徑，再以背景 child process 執行 orc
 
 ## Spec 條件
 
-- repo 必須位於 workspace root（`AGENT_ORCHESTRATOR_WORKSPACE_ROOT`）底下且本身為 Git repo。
+- repo 必須是 Git repo；若有設 `AGENT_ORCHESTRATOR_WORKSPACE_ROOT`，還必須位於其底下。
 - `/dev` 只接受 `approved` 且沒有未決事項的 spec。
 - `/dev-flow` 僅在本次命令建立的 approved spec 才會自動開始；draft 或 `needs_clarification` 一律停止在討論 session。
 - 測試要求必須是原始 shell command，例如 `npm test`，不能寫成「在 repo 執行 npm test」。
 - 成功後 spec 變為 `ready_for_main`；修正次數用盡或收到 `needs_spec` 則變為 `needs_clarification`（後者會把缺的語意與候選答案寫進未決事項）。
-- Session pointer 寫在 `<workspace root>/.pi/agent-orchestrator/sessions/`，不同 session 不互相誤用。
+- Session pointer 寫在 `$AGENT_ORCHESTRATOR_STATE_DIR/sessions/`（預設 `~/.pi/agent-orchestrator/sessions/`），不同 session 不互相誤用。
 
 ## Draft handoff 行為
 
@@ -75,4 +76,4 @@ Extension 會立即通知 handoff 路徑，再以背景 child process 執行 orc
 
 ## Session 與連線
 
-Pi 主 session 位於 workspace root，可控制該目錄下的 repo。Remote Pi relay 只傳遞 UI/session 資料；實際 orchestrator 與 agent child processes 均在 Mac 本機執行。手機離線不會改變已啟動 child process 的執行位置。
+Pi 主 session 可控制任何 Git repo（或 workspace root 底下的 repo，若有設該邊界）。Remote Pi relay 只傳遞 UI/session 資料；實際 orchestrator 與 agent child processes 均在 Mac 本機執行。手機離線不會改變已啟動 child process 的執行位置。

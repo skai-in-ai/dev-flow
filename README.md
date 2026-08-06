@@ -63,14 +63,15 @@ Artifacts 會被寫到目標 repo 的 `.orchestrator/runs/<run-id>/`（已在 `.
 
 repo 內含 extension：`extensions/orchestrate.ts`。主 session 的管理者可將此檔連結或複製到 `<workspace root>/.pi/extensions/` 後 reload Pi；本實作不會自行寫入該目錄。
 
-Extension 的兩個路徑由環境變數決定，未設定時採用預設值：
+Extension 用到的路徑全部可由環境變數覆寫：
 
 | 變數 | 預設 | 用途 |
 |:---|:---|:---|
-| `AGENT_ORCHESTRATOR_WORKSPACE_ROOT` | 啟動 Pi 時的 `process.cwd()` | 可被分派的 repo 必須位於此目錄下，是 extension 的安全邊界 |
-| `AGENT_ORCHESTRATOR_HOME` | `<workspace root>/agent-orchestrator` | 本 repo 位置，`npm run orchestrate` 在此執行 |
+| `AGENT_ORCHESTRATOR_HOME` | 由 extension 檔案自身位置推導（Node 會解開 symlink） | 本 repo 位置，`npm run orchestrate` 在此執行。只有在「複製而非連結」extension 時才需設定 |
+| `AGENT_ORCHESTRATOR_STATE_DIR` | `~/.pi/agent-orchestrator` | session pointer 的存放處 |
+| `AGENT_ORCHESTRATOR_WORKSPACE_ROOT` | 未設定 | **選用的安全邊界**。設了就只允許分派該目錄下的 repo；不設則不限制目錄，只要求目標是 Git repo，相對名稱以呼叫端 cwd 解析 |
 
-預設值對應「從 workspace 根目錄啟動 Pi、orchestrator clone 在它底下」這個擺法。其他擺法（例如 orchestrator 放在 workspace 之外）請顯式設定這兩個變數再啟動 Pi。
+三者都與 pi 的啟動目錄無關，因此從任何位置呼叫 `/dev-flow` 行為都一致。
 
 手機主 session 中可輸入：
 
