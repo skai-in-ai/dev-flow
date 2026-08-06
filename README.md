@@ -40,7 +40,7 @@ npm test
 
 ```json
 {
-  "repo": "/Users/skai.wu/side/example-repo",
+  "repo": "/path/to/workspace/example-repo",
   "objective": "修正登入 callback",
   "scope": { "include": ["src/auth/callback.ts"] },
   "acceptanceCriteria": ["invalid state is rejected"],
@@ -61,7 +61,18 @@ Artifacts 會被寫到目標 repo 的 `.orchestrator/runs/<run-id>/`（已在 `.
 
 ## Remote Pi 手機入口
 
-repo 內含 extension：`extensions/orchestrate.ts`。主 session 的管理者可將此檔連結或複製到 `~/side/.pi/extensions/` 後 reload Pi；本實作不會自行寫入該目錄。手機主 session 中可輸入：
+repo 內含 extension：`extensions/orchestrate.ts`。主 session 的管理者可將此檔連結或複製到 `<workspace root>/.pi/extensions/` 後 reload Pi；本實作不會自行寫入該目錄。
+
+Extension 的兩個路徑由環境變數決定，未設定時採用預設值：
+
+| 變數 | 預設 | 用途 |
+|:---|:---|:---|
+| `AGENT_ORCHESTRATOR_WORKSPACE_ROOT` | 啟動 Pi 時的 `process.cwd()` | 可被分派的 repo 必須位於此目錄下，是 extension 的安全邊界 |
+| `AGENT_ORCHESTRATOR_HOME` | `<workspace root>/agent-orchestrator` | 本 repo 位置，`npm run orchestrate` 在此執行 |
+
+預設值對應「從 workspace 根目錄啟動 Pi、orchestrator clone 在它底下」這個擺法。其他擺法（例如 orchestrator 放在 workspace 之外）請顯式設定這兩個變數再啟動 Pi。
+
+手機主 session 中可輸入：
 
 ```text
 /orchestrate /absolute/path/handoff.json

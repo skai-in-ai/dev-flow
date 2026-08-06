@@ -62,7 +62,7 @@ npm run orchestrate -- --handoff /absolute/path/handoff.json
 /dev-flow
 /dev
 /orchestrate /absolute/path/handoff.json
-/orchestrate /Users/skai.wu/side/example-repo 實作明確的小型需求
+/orchestrate /path/to/workspace/example-repo 實作明確的小型需求
 ```
 
 主要使用方式是在同一個 Pi session 討論需求後輸入 `/dev-flow`。Agent 會根據本 session 整理 spec：資訊完整時寫入 approved spec 並自動開始流程；資訊不足時保存 draft 或 `needs_clarification`（repo 已知時）並直接提出缺少的問題，不會開始開發。補充後必須再次輸入 `/dev-flow`；一般對話後直接儲存 approved spec 不會沿用先前命令自動啟動。不必再貼 repo 或檔案路徑。

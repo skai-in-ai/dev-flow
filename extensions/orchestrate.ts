@@ -4,9 +4,15 @@ import { resolve, relative } from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-const ORCHESTRATOR = "/Users/skai.wu/side/agent-orchestrator";
-const SIDE_ROOT = "/Users/skai.wu/side";
-const POINTER_ROOT = resolve(SIDE_ROOT, ".pi/agent-orchestrator");
+/**
+ * 兩個路徑都可用環境變數覆寫，預設值刻意對應「從 workspace 根目錄啟動 pi、
+ * orchestrator 就 clone 在它底下」這個最常見的擺法，讓零設定也能跑起來。
+ * - AGENT_ORCHESTRATOR_WORKSPACE_ROOT：可被分派的 repo 必須位於此目錄下（安全邊界）。
+ * - AGENT_ORCHESTRATOR_HOME：本 orchestrator repo 的位置，npm run orchestrate 在此執行。
+ */
+const WORKSPACE_ROOT = resolve(process.env.AGENT_ORCHESTRATOR_WORKSPACE_ROOT ?? process.cwd());
+const ORCHESTRATOR = resolve(process.env.AGENT_ORCHESTRATOR_HOME ?? resolve(WORKSPACE_ROOT, "agent-orchestrator"));
+const POINTER_ROOT = resolve(WORKSPACE_ROOT, ".pi/agent-orchestrator");
 type Pointer = { repo: string; specPath: string; updatedAt: string };
 type DevFlowRequest = { requestId: string; requestedAt: string };
 const DEV_FLOW_MARKER = "[agent-orchestrator-dev-flow:";
@@ -16,10 +22,10 @@ export function parseOrchestrateArgs(args: string): { kind: "handoff"; path: str
 	if (trimmed.endsWith(".json")) return { kind: "handoff", path: trimmed };
 	const [repo, ...objective] = trimmed.split(/\s+/); return repo && objective.length ? { kind: "draft", repo, objective: objective.join(" ") } : { kind: "invalid" };
 }
-function withinSide(path: string): boolean { const value = relative(SIDE_ROOT, path); return value !== "" && !value.startsWith("..") && !value.includes("../"); }
+function withinWorkspace(path: string): boolean { const value = relative(WORKSPACE_ROOT, path); return value !== "" && !value.startsWith("..") && !value.includes("../"); }
 function resolvedRepo(input: string, cwd: string): string {
-	const repo = resolve(input.startsWith("/") ? input : input === "." ? cwd : resolve(SIDE_ROOT, input));
-	if (!withinSide(repo)) throw new Error("repo must be under /Users/skai.wu/side");
+	const repo = resolve(input.startsWith("/") ? input : input === "." ? cwd : resolve(WORKSPACE_ROOT, input));
+	if (!withinWorkspace(repo)) throw new Error(`repo must be under ${WORKSPACE_ROOT} (set AGENT_ORCHESTRATOR_WORKSPACE_ROOT to change this)`);
 	return repo;
 }
 async function exists(path: string): Promise<boolean> { return access(path).then(() => true).catch(() => false); }
@@ -29,7 +35,7 @@ async function ensureLedgerExcluded(repo: string): Promise<void> {
 	if (!current.split("\n").includes(".orchestrator/")) await appendFile(exclude, `${current.endsWith("\n") || !current ? "" : "\n"}.orchestrator/\n`);
 }
 export async function createDraft(repoInput: string, objective: string): Promise<string> {
-	const repo = resolvedRepo(repoInput, SIDE_ROOT); await assertRepo(repo); await ensureLedgerExcluded(repo); const dir = resolve(repo, ".orchestrator/handoffs"); await mkdir(dir, { recursive: true });
+	const repo = resolvedRepo(repoInput, WORKSPACE_ROOT); await assertRepo(repo); await ensureLedgerExcluded(repo); const dir = resolve(repo, ".orchestrator/handoffs"); await mkdir(dir, { recursive: true });
 	const packageJson = await readFile(resolve(repo, "package.json"), "utf8").then(JSON.parse).catch(() => ({}));
 	const scripts = packageJson.scripts ?? {}; const tests = ["test", "build"].filter((name) => typeof scripts[name] === "string").map((name) => `npm run ${name}`);
 	const path = resolve(dir, `${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
@@ -49,7 +55,7 @@ async function writePointer(sessionId: string, pointer: Pointer): Promise<void> 
 	await writeFile(resolve(POINTER_ROOT, "sessions", `${sessionId}.json`), data);
 }
 async function readPointer(sessionId: string): Promise<Pointer | undefined> {
-	try { const pointer = JSON.parse(await readFile(resolve(POINTER_ROOT, "sessions", `${sessionId}.json`), "utf8")) as Pointer; if (withinSide(resolve(pointer.repo)) && withinSide(resolve(pointer.specPath))) return pointer; } catch { /* no session pointer */ }
+	try { const pointer = JSON.parse(await readFile(resolve(POINTER_ROOT, "sessions", `${sessionId}.json`), "utf8")) as Pointer; if (withinWorkspace(resolve(pointer.repo)) && withinWorkspace(resolve(pointer.specPath))) return pointer; } catch { /* no session pointer */ }
 }
 function devFlowPendingPath(sessionId: string): string { return resolve(POINTER_ROOT, "sessions", `${sessionId}.dev-flow-pending.json`); }
 function requestId(): string { return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`; }
@@ -65,7 +71,7 @@ export function shouldAutoStartDevFlow(pendingDevFlow: boolean, status: string, 
 }
 async function requestDevFlow(sessionId: string, cwd: string): Promise<DevFlowRequest> {
 	const resolvedCwd = resolve(cwd);
-	if (resolvedCwd !== SIDE_ROOT && !withinSide(resolvedCwd)) throw new Error("/dev-flow must run from a directory under /Users/skai.wu/side");
+	if (resolvedCwd !== WORKSPACE_ROOT && !withinWorkspace(resolvedCwd)) throw new Error(`/dev-flow must run from ${WORKSPACE_ROOT} or a directory under it (set AGENT_ORCHESTRATOR_WORKSPACE_ROOT to change this)`);
 	const request: DevFlowRequest = { requestId: requestId(), requestedAt: new Date().toISOString() };
 	await mkdir(resolve(POINTER_ROOT, "sessions"), { recursive: true });
 	await writeFile(devFlowPendingPath(sessionId), `${JSON.stringify(request)}\n`);
@@ -80,7 +86,7 @@ async function clearDevFlowRequest(sessionId: string, expectedRequestId?: string
 }
 async function latestApprovedSpec(cwd: string): Promise<string | undefined> {
 	const directory = resolve(cwd, ".agent/specs");
-	if (!withinSide(directory) || !await exists(directory)) return undefined;
+	if (!withinWorkspace(directory) || !await exists(directory)) return undefined;
 	const names = (await readdir(directory)).filter((name) => name.endsWith(".md")).sort().reverse();
 	for (const name of names) { const path = resolve(directory, name); if ((await readFile(path, "utf8")).match(/^status:\s*approved\s*$/m)) return path; }
 }
@@ -93,7 +99,7 @@ function run(commandArgs: string[], ctx: { ui: { notify(message: string, level?:
 
 function createSaveSpecTool() { return defineTool({
 	name: "save_agent_spec", label: "Save agent spec", description: "Save the agreed development spec and set it as the current session pointer. Use after discussion; set status to approved only when unresolvedItems is empty and the user has confirmed it.", promptSnippet: "Save an agreed development spec for the later /dev workflow.", promptGuidelines: ["When the user says「把結論整理成 spec」or asks to save a spec, call save_agent_spec instead of merely describing a spec in chat.", "Write status: approved only after the user has confirmed the decision and unresolvedItems is empty.", "testRequirements must be raw executable shell commands only, such as npm test or npm run build; never write prose such as「在目標 repo 執行 npm test」.", "When invoked by /dev-flow, an approved spec starts the workflow automatically. Do not start implementation yourself or ask the user to enter /dev."],
-	parameters: Type.Object({ repo: Type.String({ description: "Target repo name under /Users/skai.wu/side, or its absolute path" }), title: Type.String(), status: Type.Union([Type.Literal("draft"), Type.Literal("approved"), Type.Literal("needs_clarification")]), objective: Type.String(), backgroundAndDecisions: Type.String(), modificationScope: Type.Array(Type.String()), excludedScope: Type.Array(Type.String()), acceptanceCriteria: Type.Array(Type.String()), testRequirements: Type.Array(Type.String({ description: "Raw executable shell command only, e.g. npm test; never natural-language prose" })), risks: Type.Array(Type.String()), unresolvedItems: Type.Array(Type.String()) }),
+	parameters: Type.Object({ repo: Type.String({ description: `Target repo name under the workspace root (${WORKSPACE_ROOT}), or its absolute path` }), title: Type.String(), status: Type.Union([Type.Literal("draft"), Type.Literal("approved"), Type.Literal("needs_clarification")]), objective: Type.String(), backgroundAndDecisions: Type.String(), modificationScope: Type.Array(Type.String()), excludedScope: Type.Array(Type.String()), acceptanceCriteria: Type.Array(Type.String()), testRequirements: Type.Array(Type.String({ description: "Raw executable shell command only, e.g. npm test; never natural-language prose" })), risks: Type.Array(Type.String()), unresolvedItems: Type.Array(Type.String()) }),
 	async execute(_id: string, params: any, _signal: AbortSignal, _update: unknown, ctx: { cwd: string; sessionManager: { getSessionId(): string }; ui: { notify(message: string, level?: "info" | "warning" | "error"): void } }) {
 		const sessionId = ctx.sessionManager.getSessionId();
 		try {
@@ -112,7 +118,7 @@ function createSaveSpecTool() { return defineTool({
 	},
 	}); }
 
-/** Copy/link into ~/side/.pi/extensions. /dev intentionally reads only an approved spec, never the chat transcript. */
+/** Copy/link into <workspace>/.pi/extensions. /dev intentionally reads only an approved spec, never the chat transcript. */
 export default function (pi: ExtensionAPI) {
 	const activeDevFlowTurns = new Map<string, string>();
 	pi.on("before_agent_start", (event, ctx) => {

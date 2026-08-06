@@ -2,25 +2,36 @@
 
 本文件說明已部署的 Pi extension、Remote Pi 上的使用方式與目前限制。
 
+## 環境變數
+
+兩個路徑都由環境變數決定，未設定時採用預設值：
+
+| 變數 | 預設 | 用途 |
+|:---|:---|:---|
+| `AGENT_ORCHESTRATOR_WORKSPACE_ROOT` | 啟動 Pi 時的 `process.cwd()` | 可被分派的 repo 必須位於此目錄下，是 extension 的安全邊界 |
+| `AGENT_ORCHESTRATOR_HOME` | `<workspace root>/agent-orchestrator` | 本 repo 位置，`npm run orchestrate` 在此執行 |
+
+預設值對應「從 workspace 根目錄啟動 Pi、orchestrator clone 在它底下」這個擺法；其他擺法請顯式設定。
+
 ## 部署位置
 
 專案來源：
 
 ```text
-/Users/skai.wu/side/agent-orchestrator/extensions/orchestrate.ts
+$AGENT_ORCHESTRATOR_HOME/extensions/orchestrate.ts
 ```
 
 Pi project extension：
 
 ```text
-/Users/skai.wu/side/.pi/extensions/orchestrate.ts
+$AGENT_ORCHESTRATOR_WORKSPACE_ROOT/.pi/extensions/orchestrate.ts
 ```
 
 目前使用 symlink，因此 repo 內 extension 更新後，Pi 執行 `/reload` 即可載入新版本。
 
 ## 手機使用
 
-Remote Pi app 連上 `pi.lifestay.tw` 的 `mac-dev` session 後，在輸入框使用：
+Remote Pi app 連上你的 Remote Pi relay session 後，在輸入框使用：
 
 ```text
 先與 agent 討論需求
@@ -34,25 +45,25 @@ Remote Pi app 連上 `pi.lifestay.tw` 的 `mac-dev` session 後，在輸入框�
 舊的直接入口仍可用：
 
 ```text
-/orchestrate /Users/skai.wu/side/example 修正 README 的安裝指令
+/orchestrate <workspace>/example 修正 README 的安裝指令
 ```
 
 若已有完整 handoff：
 
 ```text
-/orchestrate /Users/skai.wu/side/example/.orchestrator/handoffs/task.json
+/orchestrate <workspace>/example/.orchestrator/handoffs/task.json
 ```
 
 Extension 會立即通知 handoff 路徑，再以背景 child process 執行 orchestrator，進度透過 Pi notification 顯示。
 
 ## Spec 條件
 
-- repo 必須位於 `/Users/skai.wu/side` 且本身為 Git repo。
+- repo 必須位於 workspace root（`AGENT_ORCHESTRATOR_WORKSPACE_ROOT`）底下且本身為 Git repo。
 - `/dev` 只接受 `approved` 且沒有未決事項的 spec。
 - `/dev-flow` 僅在本次命令建立的 approved spec 才會自動開始；draft 或 `needs_clarification` 一律停止在討論 session。
 - 測試要求必須是原始 shell command，例如 `npm test`，不能寫成「在 repo 執行 npm test」。
 - 成功後 spec 變為 `ready_for_main`；修正次數用盡或收到 `needs_spec` 則變為 `needs_clarification`（後者會把缺的語意與候選答案寫進未決事項）。
-- Session pointer 寫在 `~/.pi/agent-orchestrator/sessions/`，不同 session 不互相誤用。
+- Session pointer 寫在 `<workspace root>/.pi/agent-orchestrator/sessions/`，不同 session 不互相誤用。
 
 ## Draft handoff 行為
 
@@ -64,4 +75,4 @@ Extension 會立即通知 handoff 路徑，再以背景 child process 執行 orc
 
 ## Session 與連線
 
-Pi 主 session 位於 `/Users/skai.wu/side`，可控制該目錄下的 repo。Remote Pi relay 只傳遞 UI/session 資料；實際 orchestrator 與 agent child processes 均在 Mac 本機執行。手機離線不會改變已啟動 child process 的執行位置。
+Pi 主 session 位於 workspace root，可控制該目錄下的 repo。Remote Pi relay 只傳遞 UI/session 資料；實際 orchestrator 與 agent child processes 均在 Mac 本機執行。手機離線不會改變已啟動 child process 的執行位置。

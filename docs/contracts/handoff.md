@@ -21,7 +21,7 @@
 
 ```json
 {
-  "repo": "/Users/skai.wu/side/example",
+  "repo": "/path/to/workspace/example",
   "objective": "修正單一模組的輸入驗證",
   "scope": {
     "include": ["src/input.ts", "src/input.test.ts"],

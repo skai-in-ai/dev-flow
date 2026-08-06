@@ -5,7 +5,7 @@ Spec 是討論 session 與隔離開發流程間的穩定契約，保存在目標
 ## 必要 frontmatter
 
 ```yaml
-repo: "/Users/skai.wu/side/example"
+repo: "/path/to/workspace/example"
 status: approved
 title: "明確標題"
 created_at: "ISO-8601 timestamp"
