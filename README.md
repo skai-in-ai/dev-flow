@@ -25,6 +25,50 @@ handoff → hybrid route → implement → actual-diff risk scan → tests → i
 - `src/adapters/pi/`: 真正的 Pi JSON child-process adapter，保存 JSONL 與 metadata。
 - `src/test/`: Node 內建 test runner 的單元測試。
 
+## 成本
+
+模型透過 Pi 呼叫，目前對應到 `openai-codex/gpt-5.6-{luna,terra,sol}` 三個級距（`src/models.ts`）。以下是 2026-08-03 在單一 codebase 上 8 個真實 run 的實測，不是 benchmark，換一種任務或 codebase 數字會不一樣，但支出的**結構**應該是類似的。
+
+### 錢花在哪裡
+
+| 階段 | 佔總支出 |
+|:---|:---|
+| reviewer | 44% |
+| final reviewer（Sol） | 35% |
+| implementer | 16% |
+
+這個分佈是反直覺的地方，也是整個成本設計的起點：**審查佔 79%，實作只佔 16%**。直覺會想省實作，但實作本來就不貴。
+
+### tier 上限的效果
+
+| `--max-tier` | 單次 run | reviewer | final reviewer |
+|:---|:---|:---|:---|
+| 1（預設） | 約 $0.023 | Luna High | Sol Low |
+| 2 | $0.10 ~ $0.21 | Terra Medium | Sol Medium |
+
+差距接近一個數量級，來自兩件事：reviewer 從 Terra Medium 換成 Luna High（單次約 1/3 價），以及迴圈內不再每個 cycle 都跑 Sol final。
+
+同一批資料裡，Luna High 的 findings 仍有嚴重度分級與 `file:line` 引用，看不出品質降級。這是預設值定在 tier 1 的依據。
+
+### 這不等於放棄那道 gate
+
+Sol 沒有被拿掉，是被**移到迴圈外**：流程停在 `ready_for_main` 之後，由一個 Sol Low 讀最終 diff 與 report 並提出處置。同一道 gate 從「每個 cycle 審一次中間態」變成「整個 run 結束後審一次最終版」，比較便宜，而且審得比較準。中間態的 diff 本來就常常是半成品。
+
+真的動到金流或下單這類變更時，再手動 `--max-tier 2` 把 gate 拉回迴圈內。
+
+### implementer 的階梯只看 cycle
+
+implementer 的模型不看 tier，只看第幾次實作。這讓成本可預期：
+
+| cycle | 模型 | 理由 |
+|:---|:---|:---|
+| 1 首次實作 | Luna Medium | handoff 已寫清楚要做什麼，High 的多餘推理正是範圍漂移的來源 |
+| 2 第一次修正 | Luna High | 需要理解 finding 背後的意圖 |
+| 3 第二次修正 | Luna High | 同上 |
+| 4 第三次修正 | Terra Medium | Luna 連兩次修不好，昂貴模型才出場 |
+
+`--max-tier` 低於 2 時 cycle 4 也不會升到 Terra。上限是成本天花板，不是只約束 reviewer 的裝飾。
+
 ## Threat model
 
 **這套工具不提供沙箱。** 它以你的使用者權限執行 AI agent，agent 可以執行任意 shell 指令。使用前請先讀完本節。
