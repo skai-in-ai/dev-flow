@@ -142,6 +142,12 @@ implementer 會讀取 repo 內的檔案，內容會進入 prompt。配上不受�
 
 本 repo 目前不內建上述任何一項，也不打算假裝有。
 
+## License
+
+MIT。見 `LICENSE`。
+
+`package.json` 的 `private: true` 是防止誤發佈到 npm 的開關，與授權無關。這個 repo 是拿來 clone 的，不是拿來 `npm install` 的。
+
 ## Local verification
 
 ```bash
