@@ -71,6 +71,7 @@ bin/dev-flow --max-tier 2
 
 - 程式碼行為、tier/model 對照、handoff schema 或部署方式變更時，同步更新對應 `docs/`。
 - Reviewer 與 implementer 不共用 session；不可弱化 read-only reviewer 的工具 allowlist。
+- 動到 `toolsFor()`、`test-runner.ts` 的執行方式、或任何「這是 prompt 請求還是程式碼強制」的分野時，同步更新 README 的 Threat model。那一節逐項對應實際程式碼，漂掉就會變成會說謊的安全文件，比沒有更糟。
 - MVP 停在 `ready_for_main`，不自動 commit 或 push。
 - 輪次上限只允許出現在 `src/policies/completion-policy.ts`；`orchestrator.ts` 的失敗分支一律呼叫 `nextCycle`。
 - `applyBudget` 不得原地改寫 `request.artifacts`；ledger 必須保留未截斷的原件。

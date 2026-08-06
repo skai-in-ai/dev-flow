@@ -10,7 +10,7 @@ Extension 用到的路徑全部可由環境變數覆寫：
 |:---|:---|:---|
 | `AGENT_ORCHESTRATOR_HOME` | 由 extension 檔案自身位置推導（Node 會解開 symlink） | 本 repo 位置，`npm run orchestrate` 在此執行。只有在「複製而非連結」extension 時才需設定 |
 | `AGENT_ORCHESTRATOR_STATE_DIR` | `~/.pi/agent-orchestrator` | session pointer 的存放處 |
-| `AGENT_ORCHESTRATOR_WORKSPACE_ROOT` | 未設定 | **選用的安全邊界**。設了就只允許分派該目錄下的 repo；不設則不限制目錄，只要求目標是 Git repo，相對名稱以呼叫端 cwd 解析 |
+| `AGENT_ORCHESTRATOR_WORKSPACE_ROOT` | 未設定 | 選用的**目標選取防呆**。設了就只允許分派該目錄下的 repo；不設則不限制目錄，只要求目標是 Git repo，相對名稱以呼叫端 cwd 解析。它不是檔案系統沙箱，見 README 的 Threat model |
 
 三者都與 pi 的啟動目錄無關，因此從任何位置呼叫 `/dev-flow` 行為都一致。
 
