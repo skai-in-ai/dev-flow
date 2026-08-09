@@ -437,7 +437,7 @@ reviewer 的 read-only allowlist 是程式碼強制；implementer 則擁有 `bas
 
 以下分野很重要：
 
-- **程式碼強制**：reviewer 的唯讀工具集、角色 session 隔離、baseline 與 deterministic tests、修正次數上限。一般 CLI/Pi flow 到 `ready_for_main` 就停止；queue worker 只有在同一套 gate 全通過後，才對它建立的隔離 branch commit、push 和建立 Draft PR，且不會 merge 或部署。
+- **程式碼強制**：reviewer 的唯讀工具集、角色 session 隔離、baseline 與 deterministic tests、修正次數上限。一般 CLI/Pi flow 到 `ready_for_main` 就停止；queue worker 只有在同一套 gate 全通過後，才會先驗證可讀取的 report，再對它建立的隔離 branch commit、push 和建立 Draft PR。Report 以不受信任 Markdown 發布在 PR 的 `<details>` 區塊中，會中和 closing tag、移除本機 report/workspace path，並受保守的 48 KiB UTF-8 上限及明確截斷標記限制；它不會 merge 或部署。
 - **僅為 prompt 請求**：`renderPrompt()` 中的「不要 `git commit`、`git push`、`git reset`、`git checkout` 或修改 main」，以及「不要修改需求外檔案」。模型可以忽略這些文字，並沒有執行層攔截。
 
 另外，spec / handoff 內的測試命令會以 shell 直接執行，因此它們與程式碼具有相同的信任要求。GitHub Issue queue 的 title、body、labels 和 repository metadata 同樣是不受信任的輸入；allowlist 與 workspace-root 檢查只防止選到任意 checkout，`dev-flow-ready` 是人工 approval，不是 sandbox。
