@@ -117,25 +117,6 @@ export interface GitHubAdapter {
   createDraftPullRequest(repo: string, branch: string, title: string, body: string): Promise<DraftPullRequest>;
 }
 
-/**
- * FIFO across repositories. Issue numbers are per-repository, so ordering by number alone
- * lets a newly allowlisted repository (starting at #1) permanently outrank an older one.
- * `createdAt` is used rather than `updatedAt` so that editing an Issue body does not move it
- * to the back of the queue. Repository and number only break exact-timestamp ties, keeping
- * the selection deterministic. Issues with a missing or unparseable timestamp sort last
- * rather than silently jumping the queue.
- */
-export function orderQueue(issues: readonly QueueIssue[]): QueueIssue[] {
-  const readyAt = (issue: QueueIssue): number => {
-    const parsed = Date.parse(issue.createdAt ?? "");
-    return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
-  };
-  // Plain code-unit comparison, not localeCompare: tie-breaking must not depend on the
-  // host locale, or two workers on different machines could order the same queue differently.
-  const byRepository = (a: QueueIssue, b: QueueIssue): number => (a.repository < b.repository ? -1 : a.repository > b.repository ? 1 : 0);
-  return [...issues].sort((a, b) => readyAt(a) - readyAt(b) || byRepository(a, b) || a.number - b.number);
-}
-
 async function gh(args: string[]): Promise<string> {
   const result = await execFileAsync("gh", args, { maxBuffer: 4 * 1024 * 1024 });
   return result.stdout;
