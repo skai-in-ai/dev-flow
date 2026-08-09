@@ -153,7 +153,19 @@ Worker 不從 Issue body 接受絕對路徑。它將 `OWNER/REPOSITORY` 對應�
 codex/issue-<number>-<normalized-title>
 ```
 
-主 checkout 的 dirty working tree 不會被清理、reset 或覆寫。worktree 與 branch 目前不自動刪除，讓 needs-human 可保留現場；操作者確認不再需要後才手動清理。
+主 checkout 的 dirty working tree 不會被清理、reset 或覆寫。
+
+worktree 的回收分兩種情況：
+
+| 終局 | 處置 | 理由 |
+|:---|:---|:---|
+| Draft PR 建立成功 | **自動回收** | branch 已在遠端，worktree 只是副本 |
+| `needs_human` | 保留 | 這正是「保留現場」的定義，變更只存在本機 |
+| push 後 PR／writeback 失敗 | 保留 | 狀態不明，要人看 |
+
+自動回收前先把 run ledger 從 worktree 內搬到 `queue-jobs/<job-id>/runs/archived/`，否則 `report.md`、`decisions.json`、`cycle-<n>.diff` 與 trace 會跟著消失。整個回收是 best-effort：失敗只記進 job ledger 的 `worktree-reclaim-error.txt`，不會把一次已經成功的交付變成 needs-human。
+
+branch 不自動刪除。claim ref 也保留，它是 attempt 唯一性的依據。
 
 ## Publication gate
 
@@ -298,6 +310,6 @@ rm ~/Library/LaunchAgents/tw.lifestay.dev-flow-worker.plist
 - 單次 poll 只處理一個 Issue。
 - 同一 Issue 可依 `dev-flow-resume`、新授權決策 comment 與 retained provenance 原地 resume；已 `ready_for_main`、已帶 `dev-flow-pr-ready` 或已有 Draft PR 的 Issue 不可再次 resume。
 - 自動 `rebuild`／`cancel`、provenance 遺失後自動重建、跨 attempts 的累積 PR payload 與成本聚合都不在此版範圍。
-- Worktree、claim ref 與 ledger 不自動 garbage collect，見下方「保留現場的清理」。
+- Draft PR 成功後的 worktree 會自動回收；needs-human 的 worktree、branch、claim ref 與 job ledger 不自動 garbage collect，見下方「保留現場的清理」。
 - Worker 沒有 HTTP API 或 dashboard；`dev-flow.lifestay.tw` 不參與觸發。
 - Worker 不 merge、不 deploy，不取代人類/ChatGPT PR review。

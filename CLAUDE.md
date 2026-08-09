@@ -29,6 +29,7 @@
 - Routing：`src/routing.ts`、`src/models.ts`、`src/classifier-prompt.ts`
 - Orchestration：`src/orchestrator.ts`、`src/test-runner.ts`、`src/policies/completion-policy.ts`、`src/decision-log.ts`
 - Prompt 預算：`src/prompt-budget.ts`
+- Ledger 保留：`src/ledger-retention.ts`、`src/compact-ledgers.ts`、`bin/compact-ledgers`
 - 執行報告：`src/report.ts`（決定性渲染，不得呼叫模型）
 - dev-flow 入口：`src/dev-flow.ts`、`bin/dev-flow`
 - Pi adapter：`src/adapters/pi/pi-process-adapter.ts`
@@ -81,5 +82,6 @@ bin/dev-flow --max-tier 2
 - GitHub 上給人看的內容用台灣繁體中文，但 machine-readable token 一律保留英文，`Closes #<n>` 也算 —— 它被翻掉會讓 merge 後的 Issue 永遠不關。
 - 輪次上限只允許出現在 `src/policies/completion-policy.ts`；`orchestrator.ts` 的失敗分支一律呼叫 `nextCycle`。
 - `applyBudget` 不得原地改寫 `request.artifacts`；ledger 必須保留未截斷的原件。
+- Pi 事件在落地前一律經 `compactPiEvents()`。原始 stdout 的 `message_update` 是累積快照而非 delta，直接保存會隨模型輸出長度呈平方成長（實測單一 implementer 315 MB）。清理工具與落地路徑共用同一個函式，不得各寫一套。
 - 任何提前結束的路徑都必須經過 `finish()`；runtime exception 也要先落地成 `failed` summary 再往外拋。
 - 兩張流程圖各有分工，不要合併也不要互相複製：改分支條件或終局動 `docs/modules/orchestration.md` 的 flowchart，改 artifact 或角色動 `docs/architecture.md` 的 sequenceDiagram。

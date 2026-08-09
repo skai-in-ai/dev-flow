@@ -8,7 +8,7 @@
 npm test
 ```
 
-此命令先執行兩套 TypeScript build，再用 Node.js test runner 跑 `dist/test/*.test.js`。測試目前涵蓋 routing floor、tier/model mapping（含 cycle 階梯與 tier 上限）、cycle 計數與最後一次修正的完整驗證、decision log 回流、`needs_spec` 出口與 spec 回寫、baseline 預檢、相同失敗熔斷、崩潰寫出 `failed` summary、prompt 預算截斷、dev-flow gating、報告渲染、test runner、spec round-trip/lifecycle、測試命令驗證、Pi JSONL parsing、router zero-tools、JSON verdict aliases、無測試提示、linked worktree ledger，以及 queue 的 attempt claim ref、resume 決策解析、needs-human 報告渲染、retained worktree provenance 驗證、createdAt FIFO 選取、等待中的 resume 不被選取也不被寫入，以及已發布 PR 的 Issue 不可 resume。
+此命令先執行兩套 TypeScript build，再用 Node.js test runner 跑 `dist/test/*.test.js`。測試目前涵蓋 routing floor、tier/model mapping（含 cycle 階梯與 tier 上限）、cycle 計數與最後一次修正的完整驗證、decision log 回流、`needs_spec` 出口與 spec 回寫、baseline 預檢、相同失敗熔斷、崩潰寫出 `failed` summary、prompt 預算截斷、dev-flow gating、報告渲染、test runner、spec round-trip/lifecycle、測試命令驗證、Pi JSONL parsing、router zero-tools、JSON verdict aliases、無測試提示、linked worktree ledger，以及 queue 的 attempt claim ref、resume 決策解析、needs-human 報告渲染、retained worktree provenance 驗證、createdAt FIFO 選取、等待中的 resume 不被選取也不被寫入，已發布 PR 的 Issue 不可 resume、交付成功後的 worktree 回收與 ledger 搬移，以及事件壓縮的保留判準。
 
 ## GitHub queue local checks
 

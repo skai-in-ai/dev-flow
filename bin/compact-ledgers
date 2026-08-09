@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# 回收既有 ledger 的原始事件流。預設只報告，--apply 才改寫。
+#   compact-ledgers /Users/skai.wu/side/.orchestrator
+#   compact-ledgers /Users/skai.wu/side/.orchestrator --apply
+set -euo pipefail
+ORCHESTRATOR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+npm --prefix "$ORCHESTRATOR" run --silent build
+exec node "$ORCHESTRATOR/dist/compact-ledgers.js" "$@"

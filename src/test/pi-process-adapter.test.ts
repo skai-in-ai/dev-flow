@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PiProcessAdapter, parseJsonLines, parseReview, renderPrompt, type PiProcessRunner } from "../adapters/pi/pi-process-adapter.js";
@@ -60,20 +61,32 @@ test("classifier prompt excludes incomplete implementation from risk assessment"
   assert.match(prompt, /Do not treat a missing initial diff, unfinished acceptance criteria, or the fact that implementation has not begun as risk/);
 });
 
-test("the result carries no raw event payload, only a pointer to the ledger file", async () => {
-  // 迴歸守門：events 曾經同時存在 events.jsonl 與 result 內，orchestrator 把 result
-  // 寫進 ledger 時造成同一份資料存兩次。實測一次 run 佔 527 MB，其中單一 implementer
-  // 的 JSON 有 100% 是重複的 events。
+test("neither the result nor the disk keeps the raw event payload", async () => {
+  // 迴歸守門一：events 曾經同時存在檔案與 result 內，orchestrator 把 result 寫進 ledger
+  // 時造成同一份資料存兩次。實測一次 run 佔 527 MB，其中單一 implementer 的 JSON 有
+  // 100% 是重複的 events。
+  // 迴歸守門二：落地的 trace 只留骨架。原始 stdout 的 message_update 是累積快照而非
+  // delta，保存整份會隨模型輸出長度呈平方成長（實測單一 implementer 315 MB）。
   const bulky = Array.from({ length: 200 }, (_, index) => JSON.stringify({ type: "tool", payload: "x".repeat(500), index })).join("\n");
-  const stdout = `${bulky}\n${JSON.stringify({ type: "message_end", text: "VERDICT: pass" })}\n`;
+  const snapshots = Array.from({ length: 50 }, (_, index) => JSON.stringify({ type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "y".repeat(index * 100) }] } })).join("\n");
+  const stdout = `${bulky}\n${snapshots}\n${JSON.stringify({ type: "message_end", text: "VERDICT: pass" })}\n`;
   const dir = await mkdtemp(join(tmpdir(), "adapter-events-"));
+  const piSessionLog = join(dir, "2026-08-09T16-28-43-991Z_019fe75a-ee57-7acf-b1a0-07db35dc472a.jsonl");
+  await writeFile(piSessionLog, "pi writes its own transcript here\n");
   const runner: PiProcessRunner = { run: async () => ({ stdout, stderr: "", exitCode: 0, timedOut: false }) };
 
   const result = await new PiProcessAdapter(runner).run({ role: "reviewer", taskId: "x", prompt: "review", artifacts: {}, cwd: dir, sessionDir: dir, model: { model: "openai-codex/gpt-5.6-terra", reasoning: "medium" } });
 
   assert.equal((result as unknown as Record<string, unknown>).events, undefined, "raw events must never travel back in the result");
   assert.ok(JSON.stringify(result).length < 2_000, `the ledger payload must stay small, got ${JSON.stringify(result).length}`);
-  assert.equal(result.sessionMetadata?.eventsPath, join(dir, "events.jsonl"), "the pointer must let a reader find the full events");
-  assert.ok((await readFile(join(dir, "events.jsonl"), "utf8")).length > 90_000, "the full events must still be preserved on disk");
-  assert.equal(result.verdict, "pass", "the summary and verdict are still derived from those events");
+  assert.equal(result.sessionMetadata?.tracePath, join(dir, "trace.jsonl"), "the pointer must name the artifact that actually exists");
+
+  const trace = await readFile(join(dir, "trace.jsonl"), "utf8");
+  assert.ok(!trace.includes("message_update"), "accumulated snapshots are the whole reason the ledger exploded");
+  assert.ok(!trace.includes("x".repeat(300)), "content is not retained, only structure");
+  assert.ok(trace.length < stdout.length / 4, `expected a large reduction, got ${stdout.length} → ${trace.length}`);
+  assert.ok(!existsSync(piSessionLog), "Pi's own transcript duplicates the trace and is removed with it");
+  assert.ok(!existsSync(join(dir, "events.jsonl")), "the raw stream is never written in the first place");
+
+  assert.equal(result.verdict, "pass", "the summary and verdict are still derived from the in-memory events");
 });

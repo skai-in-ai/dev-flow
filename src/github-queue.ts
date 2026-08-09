@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { hostname } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -490,6 +490,36 @@ async function writeRetainedProvenance(cwd: string, issue: QueueIssue, branch: s
   return provenance;
 }
 
+/**
+ * 交付成功後回收隔離 worktree。
+ *
+ * 只在 Draft PR 已建立之後呼叫：那一刻 branch 已經在遠端，worktree 純粹是副本。`needs_human`
+ * 的 worktree 絕不能走這裡，那正是「保留現場」的定義，而且變更只存在本機。
+ *
+ * run ledger 住在 worktree 裡面，所以先搬到 workspace 層的 job ledger 再刪，否則
+ * `report.md`、`decisions.json`、`cycle-<n>.diff` 與 trace 會跟著消失。
+ *
+ * 全程 best-effort：回收失敗只是佔空間，不該把一次已經成功的交付變成 needs-human。
+ */
+export async function reclaimWorktree(repo: string, tree: { cwd: string; branch: string }, ledger: string): Promise<{ reclaimed: boolean; error?: string }> {
+  try {
+    const runs = join(tree.cwd, ".orchestrator", "runs");
+    if (await stat(runs).then((info) => info.isDirectory()).catch(() => false)) {
+      await mkdir(join(ledger, "runs"), { recursive: true });
+      await rename(runs, join(ledger, "runs", "archived")).catch(async (error) => {
+        // 跨檔案系統時 rename 會失敗；此時複製，複製不成就整個放棄回收，不刪任何東西。
+        if ((error as NodeJS.ErrnoException).code !== "EXDEV") throw error;
+        await cp(runs, join(ledger, "runs", "archived"), { recursive: true });
+      });
+    }
+    await git(repo, ["worktree", "remove", "--force", tree.cwd]);
+    await git(repo, ["worktree", "prune"]);
+    return { reclaimed: true };
+  } catch (error) {
+    return { reclaimed: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 export async function worktree(config: QueueConfig, repo: string, issue: QueueIssue, claim: QueueClaim, retained?: RetainedWorktreeProvenance): Promise<{ cwd: string; branch: string }> {
   if (!validBranchName(claim.defaultBranch) || !/^[0-9a-f]{40}$/i.test(claim.sha)) throw new Error("claim 到的遠端基準不合法");
   const branch = `codex/issue-${issue.number}-${slug(issue.title) || "task"}`;
@@ -643,7 +673,11 @@ export async function pollOnce(adapter: GitHubAdapter, config: QueueConfig): Pro
     await git(tree.cwd, ["push", "--set-upstream", "origin", tree.branch]); pushedBranch = tree;
     const pr = await adapter.createDraftPullRequest(issue.repository, tree.branch, `Draft: ${issue.title}`, prBody);
     draftPrCreated = true;
-    await adapter.removeLabel(issue, "dev-flow-running"); await adapter.addLabel(issue, "dev-flow-pr-ready"); prReadyLabelApplied = true; await adapter.comment(issue, `Draft PR 已建立：${pr.url}\nJob：${job}\n此 Issue 不可再次 resume。`); await record("summary.json", { status: "success", pr, outcome }); return { status: "success", issue };
+    await adapter.removeLabel(issue, "dev-flow-running"); await adapter.addLabel(issue, "dev-flow-pr-ready"); prReadyLabelApplied = true; await adapter.comment(issue, `Draft PR 已建立：${pr.url}\nJob：${job}\n此 Issue 不可再次 resume。`);
+    // 交付完成，現場不再需要：branch 已在遠端，ledger 搬到 job 目錄後回收 worktree。
+    const reclaim = await reclaimWorktree(repo, tree, ledger);
+    if (!reclaim.reclaimed) await record("worktree-reclaim-error.txt", reclaim.error ?? "unknown");
+    await record("summary.json", { status: "success", pr, outcome, worktreeReclaimed: reclaim.reclaimed }); return { status: "success", issue };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     let cleanupError: string | undefined;

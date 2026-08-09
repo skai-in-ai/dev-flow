@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { AgentRunRequest, AgentRunResult, AgentRunner, ReviewVerdict } from "../../agents/contracts.js";
 import { DEFAULT_PROMPT_BUDGET, applyBudget, type PromptBudget } from "../../prompt-budget.js";
+import { compactPiEvents, isPiSessionLog } from "../../ledger-retention.js";
 
 export interface SpawnedProcess { stdout: string; stderr: string; exitCode: number | null; timedOut: boolean; }
 export interface PiProcessRunner { run(command: string, args: string[], options: { cwd: string; input: string; timeoutMs: number }): Promise<SpawnedProcess>; }
@@ -38,13 +39,20 @@ export class PiProcessAdapter implements AgentRunner {
     else if (tools) args.push("--tools", tools);
     args.push(prompt);
     const result = await this.runner.run(this.piCommand, args, { cwd: request.cwd, input: "", timeoutMs: request.timeoutMs ?? 15 * 60_000 });
-    await writeFile(join(request.sessionDir, "events.jsonl"), result.stdout);
+    // 只保存壓縮後的 trace。原始 stdout 的 message_update 是累積快照而非 delta，落地後
+    // 會隨模型輸出長度呈平方成長；判準與保留內容見 src/ledger-retention.ts。
+    await writeFile(join(request.sessionDir, "trace.jsonl"), compactPiEvents(result.stdout));
+    // Pi 自己也在 session 目錄寫一份對話紀錄，內容與 trace 重疊。best-effort 移除：
+    // 清不掉只是佔空間，不該讓它中斷一次成功的執行。
+    for (const entry of await readdir(request.sessionDir).catch(() => [] as string[])) {
+      if (isPiSessionLog(entry)) await rm(join(request.sessionDir, entry), { force: true }).catch(() => {});
+    }
     if (result.timedOut) throw new Error(`Pi ${request.role} timed out`);
     if (result.exitCode !== 0) throw new Error(`Pi ${request.role} exited ${result.exitCode}: ${result.stderr}`);
     const events = parseJsonLines(result.stdout);
     const assistant = lastAssistantText(events);
     const review = parseReview(assistant);
-    return { summary: assistant, verdict: review.verdict, findings: review.findings, usage: lastUsage(events), sessionMetadata: { sessionDir: request.sessionDir, eventsPath: join(request.sessionDir, "events.jsonl"), model: request.model.model, reasoning: request.model.reasoning } };
+    return { summary: assistant, verdict: review.verdict, findings: review.findings, usage: lastUsage(events), sessionMetadata: { sessionDir: request.sessionDir, tracePath: join(request.sessionDir, "trace.jsonl"), model: request.model.model, reasoning: request.model.reasoning } };
   }
 }
 
