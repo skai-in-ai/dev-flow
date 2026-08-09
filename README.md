@@ -1,6 +1,6 @@
 # Agent Orchestrator
 
-一套以 **LLM-as-a-Judge** 為核心的自動化開發流程。
+一套以 **LLM-as-a-Judge** 為核心的自動化開發流程。一般 CLI/Pi 流程使用 Pi child process（每個角色均為新 session），終點只會是 `ready_for_main`，不自行 commit、push 或變動 main；可選的 GitHub Issue queue 才會在完整 gate 後，發布隔離 branch 的 Draft PR。
 
 它讓主控的 supervisor 只需要確認需求、呼叫一次 `/dev-flow`，之後由隔離的 implementer、reviewer 與 deterministic tests 自動完成實作、審查、修正與結果整理。人工只在需求尚未定義、流程卡住，或最後準備接收變更時介入。
 
@@ -212,6 +212,43 @@ ready_for_main
 
 這讓本工具專注在「產生經過測試與 review 的變更」，而不是同時承擔發布權限。
 
+### 10. 可選的 GitHub Issue queue
+
+需要把已核准需求交給 Mac 自動處理時，可使用 `bin/dev-flow-worker`。它每次 poll 最多 claim 一個、由人加上 `dev-flow-ready` label 的 open Issue：
+
+```text
+ChatGPT 讀取 repo
+  → 建立含 approved spec 的 Issue
+  → 人加入 dev-flow-ready
+  → Mac worker
+  → isolated worktree + Luna-first dev-flow
+  → codex/issue-<number>-<slug> branch + Draft PR
+  → ChatGPT review PR
+```
+
+這是一般 CLI/Pi 流程以外的明確發布入口。只有 `ready_for_main` 且 deterministic tests 與 review gates 全部通過時，worker 才會對自己建立的隔離 branch commit、push 並建立 Draft PR；它不會 merge 或部署。非成功結果會標記為 `dev-flow-needs-human`、保留 ledger，並讓下一個 queue 項目繼續執行。
+
+設定時必須提供 repo allowlist：
+
+```bash
+export DEV_FLOW_ALLOWED_REPOS=OWNER/REPOSITORY[,OWNER/OTHER]
+export DEV_FLOW_WORKSPACE_ROOT=/Users/skai.wu/side # 預設值，也必須位於此根目錄之下
+export DEV_FLOW_MAX_TIER=1                         # 選用，預設 1
+export DEV_FLOW_QUEUE_LEDGER=/path/to/ledger        # 選用
+```
+
+allowlist 對應的 checkout 必須已存在於 workspace root 下、是 Git worktree，且 `origin` 必須與 `OWNER/REPOSITORY` 完全一致；同名但不同 owner 的 checkout 會被拒絕。worker 使用本機 atomic poll lock 避免同一台 Mac 重複 claim，並以 GitHub ref 的 atomic creation 防止跨 Mac 重複處理。`gh` 必須能讀寫 Issue、push branch、建立 pull request；先用 `gh auth status` 確認登入。
+
+Issue body 必須遵循 [approved template](examples/github-issue-template.md)：`status: approved`、`max_tier`、全部必填區段、可直接執行的 raw tests，以及空白的 `Unresolved items` 都是必要條件。可先用以下方式做無副作用驗證：
+
+```bash
+DEV_FLOW_FAKE_ISSUES=/path/to/issues.json bin/dev-flow-worker --dry-run
+```
+
+`--dry-run` 不會呼叫 GitHub、建立 git worktree、commit、push 或建立 PR。排程可參考 [launchd 範例](deployment/dev-flow-worker.plist.example)；本專案不會自動安裝或載入它，請先檢查環境變數再手動啟用。
+
+Issue 的 label lifecycle 是 `dev-flow-ready` → `dev-flow-running` → `dev-flow-pr-ready` / `dev-flow-needs-human`。目前一個 Issue 只允許一次 GitHub-side claim；需重跑時建立新 Issue。worktree 與 job ledger 會保留供診斷，不會自動清理。完整的 contract、失敗語意、部署與操作限制見 [GitHub Issue queue 模組文件](docs/modules/github-issue-queue.md)。
+
 ## 有對外 API 嗎？
 
 **目前沒有。**
@@ -225,6 +262,7 @@ ready_for_main
 | `npm run orchestrate -- --handoff ...` | 以 handoff JSON 啟動 |
 | Pi extension `/dev-flow` | 從 supervisor session 整理 spec 並自動啟動 |
 | Pi extension `/orchestrate` | 直接指定 handoff 或 repo 任務 |
+| `bin/dev-flow-worker` | 可選的 GitHub Issue queue 單次 poll |
 
 外部服務若要整合，目前需要呼叫 CLI，或自行在外層包一個 API service。HTTP API layer 尚未實作。
 
@@ -397,7 +435,12 @@ handoff / spec
 
 reviewer 的 read-only allowlist 是程式碼強制；implementer 則擁有 `bash`，而 child process 的 `cwd` 只是起點，不是檔案系統圍籬。
 
-另外，spec / handoff 內的測試命令會以 shell 直接執行，因此它們與程式碼具有相同的信任要求。
+以下分野很重要：
+
+- **程式碼強制**：reviewer 的唯讀工具集、角色 session 隔離、baseline 與 deterministic tests、修正次數上限。一般 CLI/Pi flow 到 `ready_for_main` 就停止；queue worker 只有在同一套 gate 全通過後，才對它建立的隔離 branch commit、push 和建立 Draft PR，且不會 merge 或部署。
+- **僅為 prompt 請求**：`renderPrompt()` 中的「不要 `git commit`、`git push`、`git reset`、`git checkout` 或修改 main」，以及「不要修改需求外檔案」。模型可以忽略這些文字，並沒有執行層攔截。
+
+另外，spec / handoff 內的測試命令會以 shell 直接執行，因此它們與程式碼具有相同的信任要求。GitHub Issue queue 的 title、body、labels 和 repository metadata 同樣是不受信任的輸入；allowlist 與 workspace-root 檢查只防止選到任意 checkout，`dev-flow-ready` 是人工 approval，不是 sandbox。
 
 請遵守：
 
