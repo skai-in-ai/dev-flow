@@ -1,8 +1,14 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, utimesSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { hostname } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { draftPullRequestBody, MAX_DRAFT_PR_BODY_BYTES, parseIssueSpec, publicationFiles, queueConfig, type QueueIssue } from "../github-queue.js";
+import { acquirePollLock, draftPullRequestBody, MAX_DRAFT_PR_BODY_BYTES, parseIssueSpec, publicationFiles, queueConfig, worktree, type QueueIssue } from "../github-queue.js";
+
+const execFileAsync = promisify(execFile);
 
 const issue = (body: string): QueueIssue => ({ number: 12, title: "Safe task", body, labels: ["dev-flow-ready"], repository: "owner/repo" });
 const valid = `---\nstatus: approved\nmax_tier: 2\n---\n\n## Objective\nChange the behavior.\nMore detail.\n\n## Background and decisions\nKeep compatibility.\n\n## Scope include\n- src/a.ts\n\n## Scope exclude\n- deployment\n\n## Acceptance criteria\n- Existing tests pass\n\n## Tests\n- npm test\n\n## Risks\n- local shell execution\n\n## Unresolved items\nnone\n`;
@@ -116,4 +122,44 @@ test("queue configuration requires an explicit repository allowlist and defaults
   assert.equal(config.workspaceRoot, "/Users/skai.wu/side");
   assert.equal(config.workerId, "test");
   assert.throws(() => queueConfig({ DEV_FLOW_ALLOWED_REPOS: "owner/repo", DEV_FLOW_WORKSPACE_ROOT: "/tmp" }), /inside \/Users\/skai\.wu\/side/);
+});
+
+test("worktree fetches and starts at the claimed SHA rather than local HEAD", async () => {
+  const root = await mkdtemp("/tmp/dev-flow-queue-");
+  try {
+    const remote = join(root, "remote.git"); const seed = join(root, "seed"); const repo = join(root, "repo");
+    const git = async (cwd: string, args: string[]) => (await execFileAsync("git", args, { cwd })).stdout.trim();
+    await execFileAsync("git", ["init", "--bare", remote]); await execFileAsync("git", ["init", seed]);
+    await git(seed, ["config", "user.email", "test@example.invalid"]); await git(seed, ["config", "user.name", "Test"]);
+    await writeFile(join(seed, "file.txt"), "old\n"); await git(seed, ["add", "file.txt"]); await git(seed, ["commit", "-m", "old"]); await git(seed, ["branch", "-M", "main"]); await git(seed, ["remote", "add", "origin", remote]); await git(seed, ["push", "origin", "main"]);
+    await execFileAsync("git", ["clone", "--branch", "main", remote, repo]); const oldSha = await git(repo, ["rev-parse", "HEAD"]);
+    await writeFile(join(seed, "file.txt"), "new\n"); await git(seed, ["commit", "-am", "new"]); await git(seed, ["push", "origin", "main"]); const claimedSha = await git(seed, ["rev-parse", "HEAD"]);
+    const config = { allowedRepos: ["owner/repo"], workspaceRoot: root, ledgerRoot: join(root, "ledger"), maxTier: 1 as const, dryRun: false, workerId: "test" };
+    const tree = await worktree(config, repo, issue(valid), { defaultBranch: "main", sha: claimedSha });
+    assert.notEqual(oldSha, claimedSha); assert.equal(await git(tree.cwd, ["rev-parse", "HEAD"]), claimedSha);
+    assert.equal(await git(repo, ["rev-parse", "HEAD"]), oldSha);
+    await assert.rejects(() => worktree(config, repo, { ...issue(valid), number: 13 }, { defaultBranch: "main", sha: oldSha }), /does not match claimed SHA/);
+    await assert.rejects(() => worktree(config, repo, { ...issue(valid), number: 14 }, { defaultBranch: "missing", sha: claimedSha }), /fetch|Could not resolve/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("poll lock preserves live same-host owners and recovers dead or aged fallback owners", async () => {
+  const root = await mkdtemp("/tmp/dev-flow-lock-");
+  try {
+    const config = { allowedRepos: ["owner/repo"], workspaceRoot: root, ledgerRoot: join(root, "ledger"), maxTier: 1 as const, dryRun: false, workerId: "test" };
+    const lock = join(root, "lock"); await mkdirSync(lock, { recursive: true }); await mkdirSync(config.ledgerRoot, { recursive: true });
+    await writeFile(join(lock, "owner.json"), JSON.stringify({ pid: process.pid, host: hostname(), createdAt: new Date(Date.now() - 31 * 60 * 1000).toISOString() }));
+    assert.equal(await acquirePollLock(config, lock), false);
+    await writeFile(join(lock, "owner.json"), JSON.stringify({ pid: 999999999, host: hostname(), createdAt: new Date().toISOString() }));
+    assert.equal(await acquirePollLock(config, lock), true);
+    await rm(lock, { recursive: true, force: true }); await mkdirSync(lock, { recursive: true });
+    await writeFile(join(lock, "owner.json"), JSON.stringify({ pid: 1, host: "foreign-host", createdAt: new Date().toISOString() }));
+    assert.equal(await acquirePollLock(config, lock), false);
+    await writeFile(join(lock, "owner.json"), JSON.stringify({ pid: 1, host: "foreign-host", createdAt: new Date(Date.now() - 31 * 60 * 1000).toISOString() }));
+    assert.equal(await acquirePollLock(config, lock), true);
+    await rm(lock, { recursive: true, force: true }); await mkdirSync(lock, { recursive: true }); await writeFile(join(lock, "owner.json"), "not-json");
+    assert.equal(await acquirePollLock(config, lock), false);
+    utimesSync(lock, new Date(0), new Date(0));
+    assert.equal(await acquirePollLock(config, lock), true);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });

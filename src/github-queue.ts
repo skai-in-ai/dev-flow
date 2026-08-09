@@ -18,10 +18,11 @@ import type { Tier } from "./agents/contracts.js";
 const execFileAsync = promisify(execFile);
 export interface QueueIssue { number: number; title: string; body: string; labels: string[]; repository: string; }
 export interface DraftPullRequest { url: string; number?: number; }
+export interface QueueClaim { defaultBranch: string; sha: string; }
 export interface GitHubAdapter {
   listReadyIssues(): Promise<QueueIssue[]>;
   /** Returns false when another worker has already atomically claimed this Issue. */
-  claim(issue: QueueIssue): Promise<boolean>;
+  claim(issue: QueueIssue): Promise<QueueClaim | false>;
   removeLabel(issue: QueueIssue, label: string): Promise<void>;
   addLabel(issue: QueueIssue, label: string): Promise<void>;
   comment(issue: QueueIssue, body: string): Promise<void>;
@@ -43,11 +44,11 @@ export class GhCliAdapter implements GitHubAdapter {
     }
     return all.sort((a, b) => a.number - b.number);
   }
-  async claim(issue: QueueIssue): Promise<boolean> {
+  async claim(issue: QueueIssue): Promise<QueueClaim | false> {
     // A Git ref creation is a GitHub-side compare-and-set: unlike a label edit it
     // fails if another Mac has already created this Issue's claim ref.
     const repo = JSON.parse(await gh(["api", `repos/${issue.repository}`])) as { default_branch?: string };
-    if (!repo.default_branch || !/^[A-Za-z0-9._/-]+$/.test(repo.default_branch)) throw new Error(`GitHub returned an invalid default branch for ${issue.repository}`);
+    if (!repo.default_branch || !validBranchName(repo.default_branch)) throw new Error(`GitHub returned an invalid default branch for ${issue.repository}`);
     const head = JSON.parse(await gh(["api", `repos/${issue.repository}/git/ref/heads/${repo.default_branch}`])) as { object?: { sha?: string } };
     const sha = head.object?.sha;
     if (!sha || !/^[0-9a-f]{40}$/i.test(sha)) throw new Error(`GitHub returned an invalid default branch SHA for ${issue.repository}`);
@@ -59,7 +60,7 @@ export class GhCliAdapter implements GitHubAdapter {
       throw error;
     }
     await gh(["issue", "edit", String(issue.number), "--repo", issue.repository, "--remove-label", "dev-flow-ready", "--add-label", "dev-flow-running"]);
-    return true;
+    return { defaultBranch: repo.default_branch, sha: sha.toLowerCase() };
   }
   async removeLabel(issue: QueueIssue, label: string): Promise<void> { await gh(["issue", "edit", String(issue.number), "--repo", issue.repository, "--remove-label", label]); }
   async addLabel(issue: QueueIssue, label: string): Promise<void> { await gh(["issue", "edit", String(issue.number), "--repo", issue.repository, "--add-label", label]); }
@@ -156,6 +157,9 @@ async function repoPath(config: QueueConfig, repository: string): Promise<string
 }
 async function git(cwd: string, args: string[]): Promise<string> { return (await execFileAsync("git", args, { cwd, maxBuffer: 4 * 1024 * 1024 })).stdout; }
 const pollLockStaleMs = 30 * 60 * 1000;
+function validBranchName(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(value) && !value.includes("..") && !value.includes("//") && !value.endsWith("/") && !value.endsWith(".") && !value.includes("@{");
+}
 export const MAX_DRAFT_PR_BODY_BYTES = 60 * 1024;
 const MAX_DELIVERY_FIELD_LENGTH = 4 * 1024;
 const MAX_DELIVERY_LIST_ITEMS = 100;
@@ -211,7 +215,7 @@ export function draftPullRequestBody(payload: DraftPullRequestDelivery): string 
   return body;
 }
 
-async function acquirePollLock(config: QueueConfig, lockPath: string): Promise<boolean> {
+export async function acquirePollLock(config: QueueConfig, lockPath: string): Promise<boolean> {
   try {
     await mkdir(lockPath);
     await writeFile(join(lockPath, "owner.json"), JSON.stringify({ pid: process.pid, host: hostname(), createdAt: new Date().toISOString(), workerId: config.workerId }));
@@ -223,11 +227,18 @@ async function acquirePollLock(config: QueueConfig, lockPath: string): Promise<b
   try {
     const owner = JSON.parse(await readFile(join(lockPath, "owner.json"), "utf8")) as { pid?: number; host?: string; createdAt?: string };
     const age = Date.now() - Date.parse(owner.createdAt ?? "");
-    let ownerAlive = true;
+    const ageExpired = !Number.isFinite(age) || age > pollLockStaleMs;
     if (owner.host === hostname() && Number.isInteger(owner.pid) && owner.pid! > 0) {
-      try { process.kill(owner.pid!, 0); } catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") ownerAlive = false; }
+      try {
+        process.kill(owner.pid!, 0);
+        stale = false;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        stale = code === "ESRCH" ? true : ageExpired;
+      }
+    } else {
+      stale = ageExpired;
     }
-    stale = !ownerAlive || !Number.isFinite(age) || age > pollLockStaleMs;
   } catch {
     stale = Date.now() - (await stat(lockPath)).mtimeMs > pollLockStaleMs;
   }
@@ -239,11 +250,16 @@ async function acquirePollLock(config: QueueConfig, lockPath: string): Promise<b
   return acquirePollLock(config, lockPath);
 }
 
-async function worktree(config: QueueConfig, repo: string, issue: QueueIssue): Promise<{ cwd: string; branch: string }> {
+export async function worktree(config: QueueConfig, repo: string, issue: QueueIssue, claim: QueueClaim): Promise<{ cwd: string; branch: string }> {
+  if (!validBranchName(claim.defaultBranch) || !/^[0-9a-f]{40}$/i.test(claim.sha)) throw new Error("invalid claimed remote base");
   const branch = `codex/issue-${issue.number}-${slug(issue.title) || "task"}`;
   const cwd = join(config.workspaceRoot, ".orchestrator", "worktrees", `${issue.repository.replace("/", "-")}-${issue.number}`);
   await mkdir(dirname(cwd), { recursive: true });
-  await git(repo, ["worktree", "add", "-b", branch, cwd, "HEAD"]);
+  const remoteRef = `refs/remotes/origin/${claim.defaultBranch}`;
+  await git(repo, ["fetch", "origin", `+refs/heads/${claim.defaultBranch}:${remoteRef}`]);
+  const fetchedSha = (await git(repo, ["rev-parse", remoteRef])).trim().toLowerCase();
+  if (fetchedSha !== claim.sha.toLowerCase()) throw new Error("fetched default branch does not match claimed SHA");
+  await git(repo, ["worktree", "add", "-b", branch, cwd, claim.sha]);
   return { cwd, branch };
 }
 
@@ -277,14 +293,15 @@ export async function pollOnce(adapter: GitHubAdapter, config: QueueConfig): Pro
   try {
     const parsed = parseIssueSpec(issue); const repo = await repoPath(config, issue.repository);
     await git(repo, ["rev-parse", "--is-inside-work-tree"]);
-    if (!await adapter.claim(issue)) {
+    const claim = await adapter.claim(issue);
+    if (!claim) {
       await record("claim-lost.json", { job, workerId: config.workerId });
       return { status: "idle" };
     }
     claimed = true;
     await adapter.comment(issue, `dev-flow worker claimed this issue. job: ${job}`);
-    await record("claim.json", { job, workerId: config.workerId });
-    const tree = await worktree(config, repo, issue);
+    await record("claim.json", { job, workerId: config.workerId, ...claim });
+    const tree = await worktree(config, repo, issue, claim);
     const specMarkdown = issue.body;
     await mkdir(join(tree.cwd, ".agent", "specs"), { recursive: true });
     await writeFile(join(tree.cwd, ".agent", "specs", `issue-${issue.number}.md`), specMarkdown);
