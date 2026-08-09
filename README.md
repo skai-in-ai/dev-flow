@@ -249,7 +249,7 @@ export DEV_FLOW_QUEUE_LEDGER=/path/to/ledger        # 選用
 
 allowlist 對應的 checkout 必須已存在於 workspace root 下、是 Git worktree，且 `origin` 必須與 `OWNER/REPOSITORY` 完全一致；同名但不同 owner 的 checkout 會被拒絕。worker 使用本機 atomic poll lock 避免同一台 Mac 重複 claim，並以 GitHub ref 的 atomic creation 防止跨 Mac 重複處理。`gh` 必須能讀寫 Issue、push branch、建立 pull request；先用 `gh auth status` 確認登入。
 
-Issue body 必須遵循 [approved template](examples/github-issue-template.md)：`status: approved`、`max_tier`、全部必填區段、可直接執行的 raw tests，以及空白的 `Unresolved items` 都是必要條件；`Invariants and non-goals` 可省略，普通任務填 `none`。可先用以下方式做無副作用驗證：
+GitHub New Issue 提供桌面與 mobile web 都可使用的 **Dev-flow task** template（見 `.github/ISSUE_TEMPLATE/dev-flow.md`），並保留一般 blank Issues。它先建立 `status: draft` 的 draft；移除官方 `dev-flow-required` placeholders、填入 [approved template](examples/github-issue-template.md) 的 required sections 後，改為 `status: approved`，確認 raw、trusted shell tests 與 `Unresolved items: none`，再加入 `dev-flow-ready`。建立或編輯 Issue 不是 execution authorization；ready label 才是明確 queue gate，template 不會自動加 label，draft、空 required section 或官方 placeholder 都不會啟動 agent。parser 只做這些 deterministic checks，不會把任意文字（例如 `TODO` 或 `later`）判定為 semantic placeholder；語意完整度是獨立 Spec Gate 的責任。`max_tier` 必須存在；`Invariants and non-goals` 可省略，普通任務填 `none`。可先用以下方式做無副作用驗證：
 
 ```bash
 DEV_FLOW_FAKE_ISSUES=/path/to/issues.json bin/dev-flow-worker --dry-run

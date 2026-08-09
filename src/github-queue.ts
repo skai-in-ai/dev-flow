@@ -110,9 +110,14 @@ export function parseIssueSpec(issue: QueueIssue): { spec: TaskSpec; maxTier: Ti
   if (value("status") !== "approved") throw new Error("issue spec status must be approved");
   const tier = value("max_tier"); if (!/^[012]$/.test(tier)) throw new Error("issue spec max_tier must be 0, 1, or 2");
   const text = issue.body.slice(front[0].length);
+  if (/<!--\s*dev-flow-required:/i.test(text)) throw new Error("issue spec contains incomplete template placeholders");
+  const objective = section(text, "Objective");
+  const backgroundAndDecisions = section(text, "Background and decisions");
+  if (!objective) throw new Error("issue spec requires a non-empty Objective");
+  if (!backgroundAndDecisions) throw new Error("issue spec requires non-empty Background and decisions");
   const spec: TaskSpec = {
     repo: "/untrusted-issue-repo", status: "approved", title: issue.title, createdAt: new Date().toISOString(),
-    objective: section(text, "Objective"), backgroundAndDecisions: section(text, "Background and decisions"),
+    objective, backgroundAndDecisions,
     ...(text.includes("## Invariants and non-goals\n") ? { invariantsAndNonGoals: bullets(section(text, "Invariants and non-goals"), false) } : {}),
     modificationScope: bullets(section(text, "Scope include")), excludedScope: bullets(section(text, "Scope exclude"), false),
     acceptanceCriteria: bullets(section(text, "Acceptance criteria")), testRequirements: bullets(section(text, "Tests")),
