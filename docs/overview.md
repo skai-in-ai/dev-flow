@@ -46,6 +46,8 @@ Agent Orchestrator 將主討論 session 的結論保存為結構化 spec，再�
   → report.md（決定性渲染的人類可讀報告）
 ```
 
+經 GitHub Issue queue 執行時，`needs_human` 多一條回頭路：worker 保留 worktree 與 provenance，人在原 Issue 留下授權的 narrow-fix 決策後，下一個 attempt 從同一個現場續跑。詳見 `docs/modules/github-issue-queue.md`。
+
 最多允許三次修正（共四次實作）。單純升級 tier 與 `needs_spec` 都不消耗 cycle，也不會自動重做已完成的 implementation；流程會先用較強 reviewer 重新檢查。implementer 的模型只看 cycle：首次 Luna Medium、兩次修正 Luna High、第三次修正才升 Terra Medium。tier 只決定 reviewer：T1 為 Luna High，T2 為 Terra Medium 加 Sol Medium final。**tier 上限預設為 1**，`--max-tier 2` 才會用到 Terra 與 Sol。相同失敗連續兩個 cycle 會提前熔斷。
 
 ## 使用入口
@@ -83,14 +85,18 @@ npm run orchestrate -- --handoff /absolute/path/handoff.json
 | Spec-first handoff | `.agent/specs/` 文件與 session-local pointer |
 | 自動 commit / push | GitHub queue 成功 gate 後才對隔離 branch 執行 |
 | 自動建立 PR / 合併 | queue 建立 Draft PR；不自動合併 |
+| 同 Issue resume | queue 專有；需授權 comment 與 provenance 驗證，未做真實 E2E 實測 |
+| 自動 rebuild / cancel / GC | 未實作，刻意留給人 |
 | 人工 approval UI | handoff 有欄位，但 MVP 僅停在 `ready_for_main` |
 | Provider-agnostic adapter | contract 已抽象化；目前只有 Pi process adapter |
 
 ## GitHub Issue queue
 
-`bin/dev-flow-worker` 是單次 poll worker，每輪最多 claim 一個 open `dev-flow-ready` Issue。Issue 必須符合 `examples/github-issue-template.md` 的 approved spec 契約；人工 label 是 approval 邊界，但不是 sandbox。Worker 只接受設定 allowlist 的 owner/repository，從 workspace root 下已存在 checkout 建立獨立 worktree 與 `codex/issue-<number>-<slug>` branch。既有 orchestrator 的 Luna-first cycle matrix 與 max-tier cap 不變；只有 `ready_for_main` 和 deterministic gates 全通過才 commit、push、建立 Draft PR。
+`bin/dev-flow-worker` 是單次 poll worker，每輪最多 claim 一個 Issue：帶 `dev-flow-ready` 的初次 Issue，或帶 `dev-flow-resume` 且已有授權決策的原 Issue。Issue 必須符合 `examples/github-issue-template.md` 的 approved spec 契約；人工 label 是 approval 邊界，但不是 sandbox。Worker 只接受設定 allowlist 的 owner/repository，從 workspace root 下已存在 checkout 建立獨立 worktree 與 `codex/issue-<number>-<slug>` branch。既有 orchestrator 的 Luna-first cycle matrix 與 max-tier cap 不變；只有 `ready_for_main` 和 deterministic gates 全通過才 commit、push、建立 Draft PR。
 
-完整 label state machine、GitHub-side claim、failure recovery、launchd 與目前操作限制見 `docs/modules/github-issue-queue.md`。
+`needs_human` 時 worktree 與 branch 一律保留，現場狀態寫入 worktree 內的 `.orchestrator/queue-provenance.json`。下一個 attempt 需要 `dev-flow-resume` label、具寫入權限者在最新報告之後留下的 `/dev-flow resume narrow fix <說明>`，以及 retained worktree 逐項通過 provenance 驗證。尚未具備可執行決策的 Issue 在選取階段就被跳過，不 claim 也不寫入。
+
+完整 label state machine、GitHub-side claim、resume gating、failure recovery、launchd 與目前操作限制見 `docs/modules/github-issue-queue.md`。
 
 ## Runtime 資料
 

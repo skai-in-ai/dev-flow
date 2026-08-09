@@ -101,6 +101,28 @@ Claim ref 建在該 Issue 所屬 repository 底下，名稱含 Issue number 與 
 
 provenance 遺失、損壞、或 worktree 有無法由 provenance 解釋的變動時直接停在 needs-human，不重建、不捨棄、不 resume。自動 `rebuild` 與 `cancel` 不在此版範圍；要重建或放棄由人自己動手。
 
+### queue-provenance.json
+
+寫在 retained worktree 內的 `.orchestrator/queue-provenance.json`，每次非 `ready_for_main` 結束時覆寫。
+
+| 欄位 | 用途 |
+|:---|:---|
+| `repository` / `issueNumber` / `branch` / `cwd` | 身分：這個現場屬於哪個 Issue |
+| `baselineSha` | 記錄當下的 `HEAD`，resume 時逐字比對 |
+| `status` | `git status --porcelain --untracked-files=all` 原文，resume 時逐字比對 |
+| `attempt` / `recordedAt` | 產生這份快照的 attempt 與時間 |
+| `previousOutcome` | 上一輪的 `RunOutcome`；缺少就拒絕 resume |
+| `findings` / `attemptedFixes` / `testEvidence` | 交給下一個 attempt 的脈絡 |
+| `changedFiles` / `failedVerification` / `costUsd` / `durationMs` | 給人看的報告內容 |
+
+`status` 逐字比對是這裡最嚴格的一條：任何 provenance 沒記錄的變動都代表現場被外部動過，一律 fail closed。人若在 needs-human 之後手動改了那個 worktree（例如建 checkpoint commit），resume 就不會再接手，這是刻意的。
+
+### 一個操作上的 gotcha
+
+決策的時效只看 comment 的 `createdAt`，而 GitHub **編輯留言不會更新 `createdAt`**。把一則舊留言編輯成新決策沒有用，它永遠是過期的，必須開一則新留言。
+
+理由是編輯後的留言無法分辨當初是不是寫在報告之前，採信它等於讓過期決策復活。
+
 ## Repo 與 worktree 邊界
 
 Worker 不從 Issue body 接受絕對路徑。它將 `OWNER/REPOSITORY` 對應到 workspace root 下同名 checkout，然後驗證：
@@ -159,6 +181,42 @@ Local job ledger 預設在：
 ```text
 <workspace>/.orchestrator/queue-jobs/<job-id>/
 ```
+
+## 保留現場的清理
+
+worktree、branch 與 job ledger 都不自動刪除，這讓 needs-human 可以保留現場，代價是它們會無限累積。2026-08-10 的實測：10 個保留的 worktree 共佔 **2.6 GB**。
+
+體積幾乎全部來自 run ledger 內的 Pi 原始事件流。以其中一次 run 為例：
+
+| 內容 | 大小 |
+|:---|---:|
+| `events.jsonl` 的 `message_update`（22,726 筆） | 297.7 MB |
+| `message_end`（184 筆，資訊等價） | 0.9 MB |
+| `report.md`、`summary.json`、`decisions.json`、各 cycle diff | 404 KB |
+
+`message_update` 是串流的**累積快照**而非 delta，每筆都帶完整 message 物件，因此單一訊息的紀錄量隨長度呈平方成長。目前 `pi-process-adapter.ts` 原封不動保存整份 stdout，所以這些重複資料全部落地。這是已知問題，過濾與保留政策尚未實作。
+
+清理前必須逐項確認，因為「保留現場」保護的正是這些東西：
+
+| 檢查 | 指令 | 不通過的意義 |
+|:---|:---|:---|
+| 有無未 push 的 commit | `git -C <worktree> log @{u}..HEAD` | 只存在本機，刪了就沒了 |
+| 有無未 commit 的變更 | `git -C <worktree> status --porcelain` | 這正是 needs-human 保留的現場；`.agent/specs/issue-N.md` 例外，那是 worker 寫入的 Issue 副本 |
+| branch 是否已進 main | `git -C <worktree> branch -r --contains HEAD` | 未合併代表工作尚未交付 |
+
+三項都通過才可清理。留下小型 artifact、刪掉整個 worktree：
+
+```bash
+cp <worktree>/.orchestrator/runs/*/report.md      <archive>/
+cp <worktree>/.orchestrator/runs/*/summary.json   <archive>/
+cp <worktree>/.orchestrator/runs/*/decisions.json <archive>/
+cp <worktree>/.orchestrator/runs/*/*.diff         <archive>/
+
+git -C <checkout> worktree remove <worktree>
+git -C <checkout> worktree prune
+```
+
+`queue-jobs/` 很小（實測 10 個 job 共 204 KB），建議保留作稽核。claim ref 也保留：它是 attempt 唯一性的依據，刪掉會讓同一 attempt 可被重複 claim。
 
 ## 設定與手動執行
 
@@ -233,6 +291,6 @@ rm ~/Library/LaunchAgents/tw.lifestay.dev-flow-worker.plist
 - 單次 poll 只處理一個 Issue。
 - 同一 Issue 可依 `dev-flow-resume`、新授權決策 comment 與 retained provenance 原地 resume；已 `ready_for_main`、已帶 `dev-flow-pr-ready` 或已有 Draft PR 的 Issue 不可再次 resume。
 - 自動 `rebuild`／`cancel`、provenance 遺失後自動重建、跨 attempts 的累積 PR payload 與成本聚合都不在此版範圍。
-- Worktree、claim ref 與 ledger 不自動 garbage collect。
+- Worktree、claim ref 與 ledger 不自動 garbage collect，見下方「保留現場的清理」。
 - Worker 沒有 HTTP API 或 dashboard；`dev-flow.lifestay.tw` 不參與觸發。
 - Worker 不 merge、不 deploy，不取代人類/ChatGPT PR review。

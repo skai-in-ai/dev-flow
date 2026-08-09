@@ -217,6 +217,8 @@ test("draft PR renders only typed reason, Git, scope, and verification evidence"
   assert.match(body, /## 為何/); assert.match(body, /## 如何完成/); assert.match(body, /M src\/a\\\.ts/); assert.match(body, /\\~\\~secret\\~\\~/); assert.match(body, /\\#shell/); assert.match(body, /新增 2 行/);
   assert.ok(!body.includes("RAW_REPORT")); assert.ok(!body.includes("prompt=secret")); assert.ok(!body.includes("/Users/skai.wu/side")); assert.ok(!body.includes("https://localhost")); assert.ok(body.includes("https&#58;//localhost"));
   assert.match(body, /## 核准範圍/); assert.match(body, /## 驗證結果/); assert.match(body, /PASS: npm test/); assert.match(body, /## 刻意排除/);
+  // A GitHub keyword, not prose: without it a merged PR leaves its Issue open forever.
+  assert.match(body, /^Closes #12/, "the Issue-closing keyword must survive Traditional Chinese rendering");
   assert.match(body, /## 執行歷程/); assert.match(body, /初次執行/);
   const resumed = draftPullRequestBody({ ...payload, attempt: 2, resumeDecision: "narrow fix 修正測試" });
   assert.match(resumed, /第 2 次 attempt/); assert.match(resumed, /narrow fix 修正測試/);

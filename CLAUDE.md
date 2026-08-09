@@ -34,6 +34,7 @@
 - Pi adapter：`src/adapters/pi/pi-process-adapter.ts`
 - Spec contract：`src/spec.ts`
 - Mobile entrypoint：`extensions/orchestrate.ts`
+- GitHub Issue queue：`src/github-queue.ts`、`src/github-queue-cli.ts`、`bin/dev-flow-worker`
 
 ## 驗證
 
@@ -76,6 +77,8 @@ bin/dev-flow --max-tier 2
 - README 的「成本」一節與 `src/models.ts` 的註解共用同一批實測數字。改動 `modelFor()`、`DEFAULT_MAX_TIER` 或重新量測成本時，兩處一起改，並註明量測日期與 run 數。公開的數字沒有出處就是行銷文案。
 - 核心 CLI/Pi orchestrator 停在 `ready_for_main`，不自動 commit 或 push。可選的 GitHub queue wrapper 只在同一套 gates 通過後發布隔離 branch 與 Draft PR，不 merge 或 deploy。
 - 修改 queue labels、claim、failure recovery、worktree 或 publication 時，同步更新 `docs/modules/github-issue-queue.md`、README Threat model 與 `docs/rules/testing-and-safety.md`。
+- Resume 的兩條不變量不得弱化：retained worktree 一定要通過 provenance 驗證才重用；尚未取得授權決策的 Issue 在選取階段就跳過，不 claim 也不寫入 GitHub。後者若破功，worker 會每輪 poll 重貼報告並卡住 FIFO 佇列。
+- GitHub 上給人看的內容用台灣繁體中文，但 machine-readable token 一律保留英文，`Closes #<n>` 也算 —— 它被翻掉會讓 merge 後的 Issue 永遠不關。
 - 輪次上限只允許出現在 `src/policies/completion-policy.ts`；`orchestrator.ts` 的失敗分支一律呼叫 `nextCycle`。
 - `applyBudget` 不得原地改寫 `request.artifacts`；ledger 必須保留未截斷的原件。
 - 任何提前結束的路徑都必須經過 `finish()`；runtime exception 也要先落地成 `failed` summary 再往外拋。
