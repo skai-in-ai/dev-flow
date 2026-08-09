@@ -270,6 +270,9 @@ test("captures what cannot be recovered later: spec snapshot, diff, router sessi
   assert.equal(outcome.cost.byRole.reviewer, 0.065);
   assert.equal(outcome.cost.byRole.router, 0.003);
   assert.equal(outcome.cost.total, 0.073);
+  assert.ok(typeof outcome.durationMs === "number");
+  assert.equal(outcome.verification.reviewerVerdict, "pass");
+  assert.ok(outcome.verification.tests.every((test) => test.passed));
 
   const index = (await readFile(join(path, ".orchestrator", "index.jsonl"), "utf8")).trim().split("\n");
   const row = JSON.parse(index.at(-1)!) as Record<string, unknown>;

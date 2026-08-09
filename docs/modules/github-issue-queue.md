@@ -89,16 +89,16 @@ codex/issue-<number>-<normalized-title>
 
 Core orchestrator 回傳 `ready_for_main` 之前，worker 不得 push。通過後會：
 
-1. 讀取該 run 的 report；缺失或無法讀取時在 publication 前失敗。
-2. 合併 unstaged、staged 與 untracked 變更清單。
-3. 只對明確清單 stage / commit，不接受 `../` 或絕對路徑。
+1. 合併 unstaged、staged 與 untracked 變更清單。
+2. 只對明確清單 stage / commit，不接受 `../` 或絕對路徑。
+3. 從 approved spec、`RunOutcome` 的 structured verification 與 post-commit Git metadata 建立 typed delivery payload；缺少、格式錯誤、測試失敗或 reviewer 非 pass 時在 push 前失敗。report、Pi events、agent output、prompts 與 ledger 不會進入 payload。
 4. Push worker 建立的 `codex/issue-*` branch。
-5. 建立 Draft PR，將 Job、Status、Run metadata 與完整（必要時截斷的）report 內容嵌入 PR body 的 `<details>` 區塊；PR body 不公開本機 report 或 workspace 路徑。
+5. 建立 Draft PR，body 只渲染 Why、How（post-commit Git name/status 與 diff statistics）、approved scope、structured verification result 與 intentionally excluded；所有允許字串以 plain text escaped、逐欄及整體限制長度。它描述已 push 的交付狀態，不重複核心 report 的 pre-publication next step。Local report 與 ledger 只作 non-public traceability artifacts。
 6. 將 Issue 轉為 `dev-flow-pr-ready`。
 
 它不會將 PR 轉 ready、merge PR 或 deploy。
 
-PR report 邊界：report 以 untrusted Markdown 處理，`</details>` closing tag 會被中和，並以 48 KiB UTF-8 conservative cap 限制嵌入內容（超過時顯示明確 truncation marker）。report 缺失或無法讀取會在 push/PR publication 前失敗並標記 `dev-flow-needs-human`，不會發布帶有本機路徑的 broken PR。
+PR delivery boundary：PR renderer 沒有 arbitrary report、raw event、agent summary、prompt 或 ledger 參數；unknown payload fields 也不渲染。缺少或 malformed structured evidence、非成功測試或非 pass reviewer verdict 會阻擋 publication 並標記 `dev-flow-needs-human`。
 
 ## Failure semantics
 
