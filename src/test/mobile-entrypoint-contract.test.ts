@@ -11,10 +11,19 @@ test("dev-flow agent prompt requires a complete spec or explicit clarification",
   const source = await extensionSource();
   const prompt = source.match(/export function devFlowPrompt\(\): string \{\n\treturn `([\s\S]*?)`;\n\}/)?.[1];
   assert.ok(prompt, "devFlowPrompt must remain an inspectable, session-local instruction");
-  assert.match(prompt, /目標 repo、目標、修改範圍、排除範圍、驗收條件、測試命令、風險與未決事項/);
+  assert.match(prompt, /目標 repo、目標、背景與決策、不變量與非目標、修改範圍、排除範圍、驗收條件、測試命令、風險與未決事項/);
+  assert.match(prompt, /不變量與非目標若討論未宣告，可省略不填；不得自行杜撰/);
   assert.match(prompt, /status: approved、unresolvedItems: \[\]/);
   assert.match(prompt, /不得猜測或開始實作/);
   assert.match(prompt, /draft 或 needs_clarification/);
+});
+
+test("save_agent_spec always renders the parseable invariants section", async () => {
+  const source = await extensionSource();
+  assert.match(source, /invariantsAndNonGoals: Type\.Optional\(Type\.Array\(Type\.String/);
+  assert.match(source, /params\.invariantsAndNonGoals \?\? \[\]/);
+  assert.match(source, /replace\(\/\^無\$\/, "none"\)/);
+  assert.match(source, /## Invariants and non-goals/);
 });
 
 test("dev-flow only auto-starts an approved spec with no unresolved items", async () => {

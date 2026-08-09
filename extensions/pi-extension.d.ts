@@ -16,5 +16,5 @@ declare module "@earendil-works/pi-coding-agent" {
 }
 
 declare module "@earendil-works/pi-ai" {
-  export const Type: { Object(value: Record<string, unknown>): unknown; String(options?: Record<string, unknown>): unknown; Array(item: unknown): unknown; Union(items: unknown[]): unknown; Literal(value: string): unknown };
+  export const Type: { Object(value: Record<string, unknown>): unknown; String(options?: Record<string, unknown>): unknown; Array(item: unknown): unknown; Optional(item: unknown): unknown; Union(items: unknown[]): unknown; Literal(value: string): unknown };
 }
