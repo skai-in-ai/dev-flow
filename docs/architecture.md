@@ -13,6 +13,12 @@
 | Workflow | `src/orchestrator.ts` | cycle、升級、測試、review 與完成條件 |
 | Adapter | `src/adapters/pi/pi-process-adapter.ts` | Pi child process、工具權限、JSONL 與 verdict 解析 |
 | Execution | `src/test-runner.ts` | 依序執行 deterministic shell commands |
+| Policy | `src/policies/completion-policy.ts` | 失敗後是否重試的唯一判斷來源 |
+| Memory | `src/decision-log.ts` | 跨 cycle 的 findings 與 implementer 回應 |
+| Budget | `src/prompt-budget.ts` | artifact 截斷；不得原地改寫 `request.artifacts` |
+| Report | `src/report.ts` | 決定性渲染 `report.md`，不呼叫模型 |
+| Queue | `src/github-queue.ts`、`src/github-queue-cli.ts` | Issue 選取、claim、worktree、resume gating、Draft PR 發布 |
+| Dispatch | `src/dev-flow.ts` | `bin/dev-flow` 的 spec gating 薄殼 |
 
 `src/policies/completion-policy.ts` 是「失敗後是否重試」的唯一判斷來源。`src/orchestrator.ts` 的失敗分支（測試失敗、reviewer fail、降級的 needs_spec、final reviewer fail）一律呼叫 `nextCycle`，上限只允許出現在該檔案的 `DEFAULT_MAX_FIX_CYCLES`。相同失敗連續出現兩個 cycle 時，`nextCycle` 之前先熔斷。
 
@@ -104,3 +110,27 @@ ChatGPT/repo → approved Issue → human dev-flow-ready → one Mac poll
 ```
 
 Ledger 透過 `git rev-parse --git-path info/exclude` 加入 `.orchestrator/`，可處理一般 repo 與 linked worktree。
+
+GitHub queue 另外在兩個地方留下紀錄。**worktree 內**（隨現場保留，供下一個 attempt 驗證）：
+
+```text
+<retained-worktree>/.orchestrator/queue-provenance.json
+```
+
+**workspace root 下**（跨 attempt 保留，供稽核）：
+
+```text
+<workspace>/.orchestrator/
+├── queue-poll.lock                 # 單 worker poll lock
+├── worktrees/<owner-repo>-<n>/     # 每個 Issue 一個隔離 worktree
+└── queue-jobs/<job-id>/
+    ├── issue.json
+    ├── claim.json                  # 含 repository、issueNumber、attempt、claimRef
+    ├── outcome.json
+    ├── retained-provenance.json    # needs_human 時寫下的現場快照
+    ├── resume-waiting.json         # 有 resume label 但尚無可執行決策時的紀錄
+    ├── error.txt / writeback-error.txt
+    └── summary.json
+```
+
+兩者都不自動清理。run ledger 的體積由 Pi 原始 events 主導，會隨模型輸出長度呈平方成長；保留政策尚未實作。

@@ -40,6 +40,19 @@
 }
 ```
 
+## RunSource
+
+`Orchestrator.run(handoff, onProgress, source)` 的第三個參數，不屬於 handoff JSON，由 CLI、Pi extension 或 GitHub queue 直接構造。
+
+| 欄位 | 型別 | 用途 |
+|:---|:---|:---|
+| `specPath` / `specTitle` / `specMarkdown` | string | spec 入口的來源與快照；`specMarkdown` 會寫入 ledger，因為 spec 會被就地改寫 |
+| `maxTier` | Tier | 操作者的成本上限，只能往下限制 |
+| `allowRetainedChanges` | boolean | 放行非乾淨 working tree 與保留的 product-test 失敗；僅供 queue resume，且必須在 provenance 驗證通過後才設定 |
+| `resume` | object | 上一個 attempt 的脈絡：`attempt`、`decision`、`decisionLog`、`findings`、`attemptedFixes`、`testEvidence` |
+
+orchestrator 不驗證 `resume` 是否正當 —— 授權、時效與 provenance 都是呼叫端（queue）在此之前的責任。行為細節見 `docs/modules/orchestration.md` 的「Resume 入口」。
+
 ## 驗證行為
 
 `src/handoff.ts` 會拒絕非 object、空的 `repo`/`objective`、錯誤的 string arrays，以及非 `direct_main` 的 delivery。它目前不檢查 repo 是否存在、scope path 是否真的受限，也不禁止任意 shell test command；handoff 應視為受信任的本機操作指令。

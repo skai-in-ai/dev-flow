@@ -6,9 +6,9 @@
 
 1. 目標必須是 Git repo。
 2. `.orchestrator/` 先加入 repo-local Git exclude。
-3. 除 `.agent/specs/` 外，`git status --porcelain` 必須為空；其他 dirty working tree 直接拒絕啟動。
+3. 除 `.agent/specs/` 外，`git status --porcelain` 必須為空；其他 dirty working tree 直接拒絕啟動。**例外**：`RunSource.allowRetainedChanges` 為 `true` 時放行，這是 queue resume 專用，且只有在 queue 已驗過 retained worktree provenance 之後才會設定。
 4. baseline 記錄目前 `HEAD`；implementer 若改變 HEAD，流程丟出錯誤。
-5. 基礎測試命令必須在乾淨的 baseline 上通過（見下方「預檢」）。
+5. 基礎測試命令必須在乾淨的 baseline 上通過（見下方「預檢」）。resume 對這條有條件放寬，同見該節。
 
 ## 每個 cycle
 
@@ -19,9 +19,12 @@
 ```mermaid
 flowchart TD
     Start([handoff / spec]) --> Clean{working tree 乾淨？}
-    Clean -- 否 --> Reject([拒絕啟動])
+    Clean -- "否，且非 resume" --> Reject([拒絕啟動])
+    Clean -- "否，但 allowRetainedChanges" --> Pre
     Clean -- 是 --> Pre{baseline 測試預檢}
-    Pre -- 不過 --> PreStop([needs_human<br/>環境或既有程式碼已壞<br/>零模型成本])
+    Pre -- "不過：環境錯誤" --> PreStop([needs_human<br/>環境或既有程式碼已壞<br/>零模型成本])
+    Pre -- "不過：product test，且為 resume" --> Route
+    Pre -- "不過：product test，非 resume" --> PreStop
     Pre -- 過 --> Route[hybrid routing<br/>套用 --max-tier 上限]
 
     Route --> Impl[implementer<br/>模型依 cycle 階梯]
@@ -77,6 +80,24 @@ flowchart TD
 
 判斷邏輯只存在於 `src/policies/completion-policy.ts` 的 `nextCycle`，`orchestrator.ts` 的每個失敗分支都必須呼叫它，上限數字不得散落在別處。單純 tier escalation 與 `needs_spec` 都不消耗 cycle。
 
+## Resume 入口
+
+`RunSource` 是 handoff 之外的第二組執行參數，由 CLI、extension 或 queue 傳入。queue resume 會額外帶兩個欄位：
+
+| 欄位 | 意義 |
+|:---|:---|
+| `allowRetainedChanges` | 放行非乾淨 working tree 與保留的 product-test 失敗（見上方預檢） |
+| `resume.attempt` | 這是第幾次 attempt |
+| `resume.decision` | 人授權的 narrow-fix 決策原文 |
+| `resume.decisionLog` | 上一個 attempt 的 decision log |
+| `resume.findings` | 上一個 attempt 未解的 findings |
+| `resume.attemptedFixes` | 上一個 attempt 的 implementer 回應 |
+| `resume.testEvidence` | 上一個 attempt 的測試證據 |
+
+這些內容以 artifacts 注入：implementer 收到 `findings`（前一 attempt 與本輪合併）、`attempted_fixes`、`test_evidence` 與合併後的 `decision_log`；reviewer 另外收到 `resume_decision`、`prior_findings`、`prior_test_evidence`。
+
+目的與 decision log 相同 —— 讓新 attempt 的隔離 session 不必重新推導上一輪已經確認過的事 —— 差別只在跨越的是 attempt 而非 cycle。orchestrator 本身不驗證 resume 是否正當，那是 queue 在呼叫之前的責任。
+
 ## Decision log
 
 `decisions.json` 累積每個 cycle 的 findings（來源為 tests / reviewer / final_reviewer）與 implementer 的逐輪回應，並以 `decision_log` artifact 同時餵給 implementer、reviewer 與 final reviewer。
@@ -109,6 +130,14 @@ log 只收結構化 findings，沒有 findings 時才退回整段 summary，避�
 不過就拒絕啟動並收斂為 `needs_human`，成本為零。理由：baseline 是未動過的 HEAD，此時測試就不過代表環境或既有程式碼已經壞了，不是這次任務造成的，implementer 也修不好。實測有一個 run 因為環境沒安裝 `pytest`，連續四個 cycle 收到逐字元相同的錯誤，四次實作全部白費。
 
 代價是每次多跑一次測試。`RepoConfig.skipPreflight` 可關閉，只有在測試本身昂貴且環境確定穩定時才值得。
+
+### resume 的例外
+
+`RunSource.allowRetainedChanges` 為 `true` 時，預檢的判準改變：保留下來的 **product-test 失敗會被容忍並繼續執行**，因為那正是上一個 attempt 沒修完的東西，把它當成「環境已壞」拒絕啟動就永遠無法接手。
+
+但**環境錯誤仍然 fail closed**，判定條件是 `exitCode === null`，或輸出符合 `failed to spawn` / `command not found` / `no such file or directory`。這類問題 implementer 修不好，理由與上一段完全相同。
+
+兩者的分野寫在 `src/orchestrator.ts` 的 `environmentFailure`；改動它等於改動 resume 的安全邊界。
 
 ## 相同失敗熔斷
 
