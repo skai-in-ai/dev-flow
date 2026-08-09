@@ -10,6 +10,7 @@
 | `objective` | string | 是 | implementer 的主要目標 |
 | `scope.include` | string[] | 是 | deterministic routing 與 reviewer 的允許範圍 |
 | `scope.exclude` | string[] | 否 | 目前傳給 agent；orchestrator 未另做 path enforcement |
+| `invariantsAndNonGoals` | string[] | 否 | 宣告需保留的不變量與明確不做的範圍；普通任務填 `none`；legacy handoff 可省略 |
 | `acceptanceCriteria` | string[] | 是 | reviewer 驗收依據 |
 | `constraints` | string[] | 是 | 實作限制 |
 | `tests` | string[] | 是 | 依序執行的 shell commands；空陣列時明確通知 reviewer |
@@ -27,6 +28,7 @@
     "include": ["src/input.ts", "src/input.test.ts"],
     "exclude": ["migrations/"]
   },
+  "invariantsAndNonGoals": ["Preserve existing input behavior", "Do not change migrations"],
   "acceptanceCriteria": ["無效輸入回傳明確錯誤", "既有測試通過"],
   "constraints": ["不得新增 dependency", "不得 commit 或 push"],
   "tests": ["npm test"],

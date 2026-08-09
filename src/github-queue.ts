@@ -113,6 +113,7 @@ export function parseIssueSpec(issue: QueueIssue): { spec: TaskSpec; maxTier: Ti
   const spec: TaskSpec = {
     repo: "/untrusted-issue-repo", status: "approved", title: issue.title, createdAt: new Date().toISOString(),
     objective: section(text, "Objective"), backgroundAndDecisions: section(text, "Background and decisions"),
+    ...(text.includes("## Invariants and non-goals\n") ? { invariantsAndNonGoals: bullets(section(text, "Invariants and non-goals"), false) } : {}),
     modificationScope: bullets(section(text, "Scope include")), excludedScope: bullets(section(text, "Scope exclude"), false),
     acceptanceCriteria: bullets(section(text, "Acceptance criteria")), testRequirements: bullets(section(text, "Tests")),
     risks: bullets(section(text, "Risks"), false), unresolvedItems: bullets(section(text, "Unresolved items"), false),

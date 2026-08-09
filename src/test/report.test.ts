@@ -46,11 +46,16 @@ test("turns a spec gap into a lettered choice", () => {
   assert.match(report, /回答上面的選擇題/);
 });
 
-test("a crash explains itself and warns that the tree may be half-written", () => {
+test("a crash explains itself and gives the manual recovery bridge", () => {
   const report = renderReport({ ...base, status: "failed", error: "Pi implementer exited 1: connection reset by peer" });
   assert.match(report, /# 執行中斷/);
   assert.match(report, /connection reset by peer/);
   assert.match(report, /可能停在中間狀態/);
+  assert.match(report, /worktree provenance/);
+  assert.match(report, /local checkpoint commit/);
+  assert.match(report, /narrow fix/);
+  assert.match(report, /targeted follow-up review/);
+  assert.match(report, /不會自動 commit、push、restart 或 discard/);
 });
 
 test("a clean run says there is nothing outstanding rather than staying silent", () => {
@@ -80,6 +85,24 @@ test("keeps the resolved findings verbatim in a collapsed block rather than redu
   assert.match(report, /<details>/);
   assert.match(report, /ptt_tickers is never populated/, "an outer reviewer often needs to see what was caught");
   assert.match(report, /> implementer（luna）：改了 scraper 的 insert/);
+});
+
+test("needs-human guidance uses a manual checkpoint bridge", () => {
+  const report = renderReport({ ...base, cycles: 4, maxCycles: 4 });
+  assert.match(report, /worktree provenance/);
+  assert.match(report, /local checkpoint commit/);
+  assert.match(report, /human.*narrow fix|narrow fix/);
+  assert.match(report, /targeted follow-up review/);
+  assert.match(report, /does not auto|不會自動 commit、push、restart 或 discard/);
+  assert.match(report, /Resume.*#10/);
+});
+
+test("repeated failures with an error still use checkpoint guidance", () => {
+  const decisionLog = appendFindings(EMPTY_DECISION_LOG, [{ round: 2, source: "reviewer", model: "openai-codex/gpt-5.6-luna", text: "same finding" }]);
+  const report = renderReport({ ...base, cycles: 2, maxCycles: 4, error: "identical failure repeated", decisionLog });
+  assert.match(report, /worktree provenance/);
+  assert.match(report, /local checkpoint commit/);
+  assert.doesNotMatch(report, /上面的中止原因說明了為什麼再修一次也沒用/);
 });
 
 test("does not claim the budget ran out when cycles are left", () => {

@@ -8,11 +8,17 @@ const valid = `---\nstatus: approved\nmax_tier: 2\n---\n\n## Objective\nChange t
 test("queue parser requires approved, complete specs and never uses an issue repo path", () => {
   const parsed = parseIssueSpec(issue(valid));
   assert.equal(parsed.spec.objective, "Change the behavior.\nMore detail.");
+  assert.equal(parsed.spec.invariantsAndNonGoals, undefined, "legacy Issues may omit the optional section");
   assert.equal(parsed.spec.repo, "/untrusted-issue-repo");
   assert.equal(parsed.maxTier, 2);
   assert.throws(() => parseIssueSpec(issue(valid.replace("none", "- decide later"))), /unresolved/);
   assert.throws(() => parseIssueSpec(issue(valid.replace("none", "Decide API behavior"))), /only bullets/);
   assert.throws(() => parseIssueSpec(issue(valid.replace("- npm test", "- run the tests"))), /raw executable/);
+});
+
+test("queue parser carries the optional invariants and non-goals section", () => {
+  const parsed = parseIssueSpec(issue(valid.replace("## Scope include", "## Invariants and non-goals\n- Preserve existing login behavior\n- Do not change the public API\n\n## Scope include")));
+  assert.deepEqual(parsed.spec.invariantsAndNonGoals, ["Preserve existing login behavior", "Do not change the public API"]);
 });
 
 test("publication includes staged, unstaged, and untracked files without duplicates", () => {
