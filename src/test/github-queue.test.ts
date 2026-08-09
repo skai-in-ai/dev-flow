@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { acquirePollLock, draftPullRequestBody, MAX_DRAFT_PR_BODY_BYTES, parseIssueSpec, publicationFiles, queueConfig, worktree, type QueueIssue } from "../github-queue.js";
+import { acquirePollLock, draftPullRequestBody, MAX_DRAFT_PR_BODY_BYTES, orderQueue, parseIssueSpec, publicationFiles, queueConfig, worktree, type QueueIssue } from "../github-queue.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -59,6 +59,32 @@ test("queue parser fails closed for draft, empty sections, and official template
 test("queue parser carries the optional invariants and non-goals section", () => {
   const parsed = parseIssueSpec(issue(valid.replace("## Scope include", "## Invariants and non-goals\n- Preserve existing login behavior\n- Do not change the public API\n\n## Scope include")));
   assert.deepEqual(parsed.spec.invariantsAndNonGoals, ["Preserve existing login behavior", "Do not change the public API"]);
+});
+
+test("queue order is FIFO across repositories, not by per-repository issue number", () => {
+  const queued = (repository: string, number: number, createdAt?: string): QueueIssue => ({ number, title: "t", body: "b", labels: ["dev-flow-ready"], repository, createdAt });
+  const ordered = orderQueue([
+    queued("owner/new-repo", 1, "2026-08-10T00:00:00Z"),
+    queued("owner/old-repo", 90, "2026-08-01T00:00:00Z"),
+    queued("owner/old-repo", 91, "2026-08-05T00:00:00Z"),
+  ]).map((issue) => `${issue.repository}#${issue.number}`);
+  assert.deepEqual(ordered, ["owner/old-repo#90", "owner/old-repo#91", "owner/new-repo#1"], "the older queued Issue wins even though its number is far higher");
+
+  const tied = orderQueue([
+    queued("owner/b", 2, "2026-08-01T00:00:00Z"),
+    queued("owner/a", 7, "2026-08-01T00:00:00Z"),
+    queued("owner/a", 3, "2026-08-01T00:00:00Z"),
+  ]).map((issue) => `${issue.repository}#${issue.number}`);
+  assert.deepEqual(tied, ["owner/a#3", "owner/a#7", "owner/b#2"], "identical timestamps fall back to a deterministic repository and number order");
+
+  const missing = orderQueue([
+    queued("owner/a", 5),
+    queued("owner/a", 6, "not-a-date"),
+    queued("owner/a", 7, "2026-08-09T00:00:00Z"),
+  ]).map((issue) => issue.number);
+  assert.deepEqual(missing, [7, 5, 6], "issues without a usable timestamp sort last instead of jumping the queue");
+
+  assert.deepEqual(orderQueue([]), [], "an empty queue stays empty");
 });
 
 test("publication includes staged, unstaged, and untracked files without duplicates", () => {

@@ -16,10 +16,11 @@ import { specToHandoff, parseSpec, assertExecutableTestCommands, type TaskSpec }
 import type { Tier } from "./agents/contracts.js";
 
 const execFileAsync = promisify(execFile);
-export interface QueueIssue { number: number; title: string; body: string; labels: string[]; repository: string; }
+export interface QueueIssue { number: number; title: string; body: string; labels: string[]; repository: string; createdAt?: string; }
 export interface DraftPullRequest { url: string; number?: number; }
 export interface QueueClaim { defaultBranch: string; sha: string; }
 export interface GitHubAdapter {
+  /** Any order; `pollOnce` owns selection order via `orderQueue`. */
   listReadyIssues(): Promise<QueueIssue[]>;
   /** Returns false when another worker has already atomically claimed this Issue. */
   claim(issue: QueueIssue): Promise<QueueClaim | false>;
@@ -27,6 +28,25 @@ export interface GitHubAdapter {
   addLabel(issue: QueueIssue, label: string): Promise<void>;
   comment(issue: QueueIssue, body: string): Promise<void>;
   createDraftPullRequest(repo: string, branch: string, title: string, body: string): Promise<DraftPullRequest>;
+}
+
+/**
+ * FIFO across repositories. Issue numbers are per-repository, so ordering by number alone
+ * lets a newly allowlisted repository (starting at #1) permanently outrank an older one.
+ * `createdAt` is used rather than `updatedAt` so that editing an Issue body does not move it
+ * to the back of the queue. Repository and number only break exact-timestamp ties, keeping
+ * the selection deterministic. Issues with a missing or unparseable timestamp sort last
+ * rather than silently jumping the queue.
+ */
+export function orderQueue(issues: readonly QueueIssue[]): QueueIssue[] {
+  const readyAt = (issue: QueueIssue): number => {
+    const parsed = Date.parse(issue.createdAt ?? "");
+    return Number.isFinite(parsed) ? parsed : Number.POSITIVE_INFINITY;
+  };
+  // Plain code-unit comparison, not localeCompare: tie-breaking must not depend on the
+  // host locale, or two workers on different machines could order the same queue differently.
+  const byRepository = (a: QueueIssue, b: QueueIssue): number => (a.repository < b.repository ? -1 : a.repository > b.repository ? 1 : 0);
+  return [...issues].sort((a, b) => readyAt(a) - readyAt(b) || byRepository(a, b) || a.number - b.number);
 }
 
 async function gh(args: string[]): Promise<string> {
@@ -38,11 +58,11 @@ export class GhCliAdapter implements GitHubAdapter {
   async listReadyIssues(): Promise<QueueIssue[]> {
     const all: QueueIssue[] = [];
     for (const repo of this.repos) {
-      const json = await gh(["issue", "list", "--repo", repo, "--state", "open", "--label", "dev-flow-ready", "--json", "number,title,body,labels"]);
-      const issues = JSON.parse(json) as Array<{ number: number; title: string; body?: string; labels?: Array<{ name: string }> }>;
-      all.push(...issues.map((issue) => ({ number: issue.number, title: issue.title, body: issue.body ?? "", labels: (issue.labels ?? []).map((label) => label.name), repository: repo })));
+      const json = await gh(["issue", "list", "--repo", repo, "--state", "open", "--label", "dev-flow-ready", "--json", "number,title,body,labels,createdAt"]);
+      const issues = JSON.parse(json) as Array<{ number: number; title: string; body?: string; labels?: Array<{ name: string }>; createdAt?: string }>;
+      all.push(...issues.map((issue) => ({ number: issue.number, title: issue.title, body: issue.body ?? "", labels: (issue.labels ?? []).map((label) => label.name), repository: repo, createdAt: issue.createdAt })));
     }
-    return all.sort((a, b) => a.number - b.number);
+    return all;
   }
   async claim(issue: QueueIssue): Promise<QueueClaim | false> {
     // A Git ref creation is a GitHub-side compare-and-set: unlike a label edit it
@@ -280,7 +300,8 @@ export async function pollOnce(adapter: GitHubAdapter, config: QueueConfig): Pro
   await mkdir(dirname(lockPath), { recursive: true });
   if (!await acquirePollLock(config, lockPath)) return { status: "idle" };
   try {
-    const issues = (await adapter.listReadyIssues()).filter((issue) => !issue.labels.includes("dev-flow-running") && config.allowedRepos.includes(issue.repository));
+    // Selection order is owned here, not by the adapter, so every adapter selects identically.
+    const issues = orderQueue((await adapter.listReadyIssues()).filter((issue) => !issue.labels.includes("dev-flow-running") && config.allowedRepos.includes(issue.repository)));
   const issue = issues[0]; if (!issue) return { status: "idle" };
   const job = `${new Date().toISOString().replace(/[:.]/g, "-")}-${issue.number}-${config.workerId}`;
   const ledger = join(config.ledgerRoot, job); await mkdir(ledger, { recursive: true });
