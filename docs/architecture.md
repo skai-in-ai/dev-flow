@@ -94,6 +94,7 @@ ChatGPT/repo → approved Issue → human dev-flow-ready → one Mac poll
 <target-repo>/.orchestrator/
 ├── router-<timestamp>/
 └── runs/<run-id>/
+    │  # 交付成功後整個 runs/ 會搬到 queue-jobs/<job-id>/runs/archived/ 再回收 worktree
     ├── run.json
     ├── cycle-<n>-implementer.json
     ├── cycle-<n>-tests.json
@@ -105,6 +106,7 @@ ChatGPT/repo → approved Issue → human dev-flow-ready → one Mac poll
     ├── report.md                  # 人類可讀報告（決定性渲染）
     ├── cycle-<n>.diff             # 該 cycle 的完整 diff，第一級檔案
     ├── cycle-<n>-router/          # classifier session，歸屬於本次 run
+    │   └── trace.jsonl           # 壓縮後的事件骨架，不含內容（見 pi-adapter 模組）
     ├── summary.json
     └── summary.md
 ```
@@ -129,8 +131,10 @@ GitHub queue 另外在兩個地方留下紀錄。**worktree 內**（隨現場保
     ├── outcome.json
     ├── retained-provenance.json    # needs_human 時寫下的現場快照
     ├── resume-waiting.json         # 有 resume label 但尚無可執行決策時的紀錄
+    ├── runs/archived/              # 交付成功後從 worktree 搬出的 run ledger
+    ├── worktree-reclaim-error.txt  # 回收失敗的原因（不影響交付成功）
     ├── error.txt / writeback-error.txt
     └── summary.json
 ```
 
-兩者都不自動清理。run ledger 的體積由 Pi 原始 events 主導，會隨模型輸出長度呈平方成長；保留政策尚未實作。
+Draft PR 成功後 worktree 會自動回收，其餘保留供診斷。事件在落地前就壓縮，因此 run ledger 不再隨模型輸出長度呈平方成長；判準見 `docs/modules/pi-adapter.md` 的「事件保留」。

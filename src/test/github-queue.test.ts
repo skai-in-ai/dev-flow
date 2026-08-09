@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, utimesSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, utimesSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { acquirePollLock, claimRef, draftPullRequestBody, MAX_DRAFT_PR_BODY_BYTES, nextAttempt, orderQueue, parseIssueSpec, parseResumeDecision, pendingResume, publicationFiles, queueConfig, renderNeedsHumanReport, validateRetainedWorktree, worktree, worktreePath, type GitHubAdapter, type QueueClaim, type QueueComment, type QueueIssue } from "../github-queue.js";
+import { acquirePollLock, claimRef, reclaimWorktree, draftPullRequestBody, MAX_DRAFT_PR_BODY_BYTES, nextAttempt, orderQueue, parseIssueSpec, parseResumeDecision, pendingResume, publicationFiles, queueConfig, renderNeedsHumanReport, validateRetainedWorktree, worktree, worktreePath, type GitHubAdapter, type QueueClaim, type QueueComment, type QueueIssue } from "../github-queue.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -196,6 +196,42 @@ test("an adapter without comment support can never resume", async () => {
     createDraftPullRequest: async () => ({ url: "https://github.com/owner/repo/pull/1" }),
   };
   assert.equal(await pendingResume(bare, target), undefined);
+});
+
+test("a delivered worktree is reclaimed, but only after its ledger is moved out", async () => {
+  const root = await mkdtemp("/tmp/dev-flow-reclaim-");
+  try {
+    const repo = join(root, "repo");
+    await execFileAsync("git", ["init", repo]);
+    await execFileAsync("git", ["config", "user.email", "test@example.invalid"], { cwd: repo });
+    await execFileAsync("git", ["config", "user.name", "Test"], { cwd: repo });
+    await writeFile(join(repo, "file.txt"), "x\n");
+    await execFileAsync("git", ["add", "file.txt"], { cwd: repo });
+    await execFileAsync("git", ["commit", "-m", "base"], { cwd: repo });
+    const tree = { cwd: join(root, "tree"), branch: "codex/issue-12-safe-task" };
+    await execFileAsync("git", ["worktree", "add", "-b", tree.branch, tree.cwd], { cwd: repo });
+
+    // run ledger 住在 worktree 裡；沒搬走就刪，等於把整份稽核紀錄一起丟掉。
+    await mkdirSync(join(tree.cwd, ".orchestrator", "runs", "run-1"), { recursive: true });
+    await writeFile(join(tree.cwd, ".orchestrator", "runs", "run-1", "report.md"), "# 報告\n");
+    // 交付後 worktree 仍是 dirty 很正常：node_modules、未追蹤的 spec 副本都還在。
+    await writeFile(join(tree.cwd, "untracked.txt"), "left over\n");
+    const ledger = join(root, "ledger", "job-1");
+    await mkdirSync(ledger, { recursive: true });
+
+    const result = await reclaimWorktree(repo, tree, ledger);
+
+    assert.equal(result.reclaimed, true, result.error);
+    assert.equal(readFileSync(join(ledger, "runs", "archived", "run-1", "report.md"), "utf8"), "# 報告\n", "the ledger must survive the worktree that produced it");
+    assert.ok(!existsSync(tree.cwd), "a delivered worktree is a copy of the pushed branch; keeping it only costs disk");
+    assert.ok(!(await execFileAsync("git", ["worktree", "list"], { cwd: repo })).stdout.includes(tree.cwd), "the worktree registration is pruned, not left dangling");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("a failed reclaim is reported rather than thrown, so a delivered PR still counts as success", async () => {
+  const result = await reclaimWorktree("/nonexistent-repo", { cwd: "/nonexistent-tree", branch: "codex/x" }, "/nonexistent-ledger");
+  assert.equal(result.reclaimed, false);
+  assert.ok(result.error, "the reason belongs in the job ledger");
 });
 
 test("publication includes staged, unstaged, and untracked files without duplicates", () => {
