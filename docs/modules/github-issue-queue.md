@@ -72,6 +72,12 @@ Worker 只選 open 且帶 `dev-flow-ready` 或 `dev-flow-resume` 的 Issue，每
 
 Resume 用同一條排序：`dev-flow-resume` 不會插隊，等待中的初次 Issue 也不會被它擠掉。
 
+## 選取順序
+
+跨 repository 以 Issue `createdAt` 遞增排序，取第一個。Issue 編號是 per-repository 的計數器，單以編號排序會讓新加入 allowlist 的 repository（從 #1 開始）永久插隊到既有 repository 前面。採 `createdAt` 而非 `updatedAt`，是為了讓編輯 Issue body 不會把它推到隊尾。時間戳完全相同時才以 repository 名稱與 Issue 編號打破平手（以 code unit 比較，不用 locale-dependent 的 `localeCompare`，否則不同機器的 worker 可能對同一個 queue 得出不同順序），確保選取是決定性的；時間戳缺漏或無法解析的 Issue 排在最後，不會靜默插隊。
+
+已知近似：`createdAt` 是 Issue 建立時間，不是加上 `dev-flow-ready` 的時間。長期擱置後才核准的 Issue，會排在「較晚建立但立刻核准」的 Issue 前面。精確版本需查 label 事件時間（`gh api repos/{owner}/{repo}/issues/{n}/timeline`），成本高一個等級，目前刻意不做。
+
 ## Claim 與重複防護
 
 1. Workspace 內以 atomic `mkdir` 作單 worker lock。
