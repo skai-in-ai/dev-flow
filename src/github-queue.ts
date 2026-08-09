@@ -150,6 +150,41 @@ async function repoPath(config: QueueConfig, repository: string): Promise<string
 }
 async function git(cwd: string, args: string[]): Promise<string> { return (await execFileAsync("git", args, { cwd, maxBuffer: 4 * 1024 * 1024 })).stdout; }
 const pollLockStaleMs = 30 * 60 * 1000;
+/** Conservative report budget, leaving room for PR metadata and wrapper markup. */
+export const MAX_DRAFT_PR_REPORT_BYTES = 48 * 1024;
+const reportTruncationMarker = "\n\n[dev-flow report truncated to fit the GitHub PR body limit]";
+
+function redactLocalPaths(report: string, localPaths: readonly string[]): string {
+  return [...new Set(localPaths.filter(Boolean))]
+    .sort((a, b) => b.length - a.length)
+    .reduce((text, path) => text.split(path).join("[local path omitted]"), report);
+}
+
+function truncateUtf8(value: string, maxBytes: number): { value: string; truncated: boolean } {
+  if (Buffer.byteLength(value, "utf8") <= maxBytes) return { value, truncated: false };
+  const markerBytes = Buffer.byteLength(reportTruncationMarker, "utf8");
+  const target = Math.max(0, maxBytes - markerBytes);
+  let end = Math.min(value.length, target);
+  while (end > 0 && Buffer.byteLength(value.slice(0, end), "utf8") > target) end--;
+  return { value: `${value.slice(0, end)}${reportTruncationMarker}`, truncated: true };
+}
+
+/** Render only GitHub-visible data; local report/workspace paths never enter the PR body. */
+export function draftPullRequestBody(metadata: { issueNumber: number; job: string; status: string; runId: string; reportPath: string; workspacePath: string }, report: string): string {
+  const safeReport = redactLocalPaths(report, [metadata.reportPath, metadata.workspacePath]);
+  const neutralized = safeReport.replace(/<\/details\s*>/gi, "&lt;/details&gt;");
+  const limited = truncateUtf8(neutralized, MAX_DRAFT_PR_REPORT_BYTES);
+  return `Closes #${metadata.issueNumber} (review only; not merged)\n\nJob: ${metadata.job}\nStatus: ${metadata.status}\nRun: ${metadata.runId}\n\n<details>\n<summary>dev-flow report</summary>\n\n${limited.value}\n\n</details>`;
+}
+
+async function readDraftReport(reportPath: string): Promise<string> {
+  try {
+    return await readFile(reportPath, "utf8");
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`dev-flow report is missing or unreadable; no PR was published: ${detail}`);
+  }
+}
 
 async function acquirePollLock(config: QueueConfig, lockPath: string): Promise<boolean> {
   try {
@@ -235,8 +270,11 @@ export async function pollOnce(adapter: GitHubAdapter, config: QueueConfig): Pro
       await git(tree.cwd, ["ls-files", "--others", "--exclude-standard"]),
     );
     if (!files.length || files.some((file) => file.startsWith("../") || file.startsWith("/"))) throw new Error("no safe changes to publish");
+    const reportPath = join(tree.cwd, ".orchestrator", "runs", outcome.runId, "report.md");
+    const report = await readDraftReport(reportPath);
+    const prBody = draftPullRequestBody({ issueNumber: issue.number, job, status: "ready_for_main", runId: outcome.runId, reportPath, workspacePath: config.workspaceRoot }, report);
     await git(tree.cwd, ["add", "--", ...files]); await git(tree.cwd, ["commit", "--only", "-m", `codex: issue #${issue.number}`, "--", ...files]); await git(tree.cwd, ["push", "--set-upstream", "origin", tree.branch]); pushedBranch = tree;
-    const pr = await adapter.createDraftPullRequest(issue.repository, tree.branch, `Draft: ${issue.title}`, `Closes #${issue.number} (review only; not merged)\n\nJob: ${job}\nStatus: ready_for_main\nRun: ${outcome.runId}\nReport: ${join(tree.cwd, ".orchestrator", "runs", outcome.runId, "report.md")}`);
+    const pr = await adapter.createDraftPullRequest(issue.repository, tree.branch, `Draft: ${issue.title}`, prBody);
     await adapter.removeLabel(issue, "dev-flow-running"); await adapter.addLabel(issue, "dev-flow-pr-ready"); prReadyLabelApplied = true; await adapter.comment(issue, `Draft PR ready for review: ${pr.url}\nJob: ${job}`); await record("summary.json", { status: "success", pr, outcome }); return { status: "success", issue };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
