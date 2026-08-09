@@ -2,6 +2,21 @@
 
 本文件說明已部署的 Pi extension、Remote Pi 上的使用方式與目前限制。
 
+這是 README 所稱的**入口 B**：從同一個 Pi／Remote Pi session 的討論產生 spec，成功後把變更留在目前 working tree。它不會建立 GitHub Issue 或 Draft PR。若你的目標是「從手機／外部 ChatGPT 建立排隊任務，最後在 GitHub 收 PR」，請使用**入口 A**，見 [GitHub Issue queue](github-issue-queue.md)。
+
+## 入口 B 完整流程
+
+```text
+同一個 Pi／Remote Pi session 討論
+  → /dev-flow
+  ├─ 缺資訊：保存 draft／needs_clarification → 提問 → 補充後再 /dev-flow
+  └─ 已收斂：保存 approved spec → 自動啟動 core orchestrator
+       → ready_for_main：變更留在目前 repo working tree
+       └─ needs_human：回到目前 session 處理
+```
+
+已有 approved spec 時可改用 `/dev`；它不重新讀取或整理討論。
+
 ## 環境變數
 
 Extension 用到的路徑全部可由環境變數覆寫：

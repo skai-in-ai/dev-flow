@@ -2,7 +2,9 @@
 
 本模組將 GitHub 當作 ChatGPT、人類 approval 與本機 coding agent 之間的穩定交接層。它是核心 orchestrator 外的可選 wrapper，不改變 Luna-first routing、deterministic tests 或 isolated review。
 
-## 這次新增的重點
+這是 README 所稱的**入口 A**。若你正在同一個 Pi／Remote Pi session 討論，成功後只需要 working-tree diff，不需要 Issue queue 或 Draft PR，應使用**入口 B**的 `/dev-flow`；見 [手機與 Pi 入口](mobile-entrypoint.md)。
+
+## 入口 A 完整流程
 
 ```text
 人在 ChatGPT 討論需求

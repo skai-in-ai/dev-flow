@@ -27,6 +27,18 @@ Agent Orchestrator 將主討論 session 的結論保存為結構化 spec，再�
 
 判準是：切得出「一份 spec 能描述完」的變更嗎？切不出來就代表還在探索階段。
 
+## 兩條入口
+
+兩條入口共用 core orchestrator，但交付邊界不同，不能混為同一條操作流程。
+
+### 入口 A：GitHub Issue queue → isolated worktree → Draft PR
+
+適合從手機或外部 ChatGPT 交辦、多任務排隊，並希望最後在 GitHub 收 Draft PR。Issue 需為 approved spec 並加上 `dev-flow-ready`；worker 在隔離 worktree 執行同一批 gates，成功後才 commit、push、建立 Draft PR。`needs_human` 則保留 worktree，經授權的 `dev-flow-resume` 決策可從原現場續跑。它不 merge、不 deploy；完整流程見 [GitHub Issue queue](modules/github-issue-queue.md)。
+
+### 入口 B：Pi／Remote Pi／CLI → working tree
+
+適合正在同一個 Pi session 討論並立刻開發。`/dev-flow` 整理討論成 spec，approved 時啟動流程；完成後變更停在目前 working tree。它不 commit、push、建立 PR、merge 或 deploy；操作方式見 [手機與 Pi 入口](modules/mobile-entrypoint.md)。
+
 ## 目前流程
 
 ```text
@@ -50,7 +62,7 @@ Agent Orchestrator 將主討論 session 的結論保存為結構化 spec，再�
 
 最多允許三次修正（共四次實作）。單純升級 tier 與 `needs_spec` 都不消耗 cycle，也不會自動重做已完成的 implementation；流程會先用較強 reviewer 重新檢查。implementer 的模型只看 cycle：首次 Luna Medium、兩次修正 Luna High、第三次修正才升 Terra Medium。tier 只決定 reviewer：T1 為 Luna High，T2 為 Terra Medium 加 Sol Medium final。**tier 上限預設為 1**，`--max-tier 2` 才會用到 Terra 與 Sol。相同失敗連續兩個 cycle 會提前熔斷。
 
-## 使用入口
+## 入口 B 操作方式
 
 ### CLI
 
@@ -90,7 +102,7 @@ npm run orchestrate -- --handoff /absolute/path/handoff.json
 | 人工 approval UI | handoff 有欄位，但 MVP 僅停在 `ready_for_main` |
 | Provider-agnostic adapter | contract 已抽象化；目前只有 Pi process adapter |
 
-## GitHub Issue queue
+## 入口 A：GitHub Issue queue
 
 `bin/dev-flow-worker` 是單次 poll worker，每輪最多 claim 一個 Issue：帶 `dev-flow-ready` 的初次 Issue，或帶 `dev-flow-resume` 且已有授權決策的原 Issue。Issue 必須符合 `examples/github-issue-template.md` 的 approved spec 契約；人工 label 是 approval 邊界，但不是 sandbox。Worker 只接受設定 allowlist 的 owner/repository，從 workspace root 下已存在 checkout 建立獨立 worktree 與 `codex/issue-<number>-<slug>` branch。既有 orchestrator 的 Luna-first cycle matrix 與 max-tier cap 不變；只有 `ready_for_main` 和 deterministic gates 全通過才 commit、push、建立 Draft PR。
 
