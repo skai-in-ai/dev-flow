@@ -21,6 +21,7 @@
 | 修改 retry、review 或完成條件；查完整流程圖 | `docs/modules/orchestration.md` |
 | 修改 Pi invocation 或權限 | `docs/modules/pi-adapter.md` |
 | 修改手機 `/orchestrate` 入口 | `docs/modules/mobile-entrypoint.md` |
+| 修改 GitHub Issue queue、labels、worktree 或 Draft PR 發布 | `docs/modules/github-issue-queue.md` |
 | 測試、Git 或部署操作 | `docs/rules/testing-and-safety.md` |
 
 ## 模組
@@ -73,7 +74,8 @@ bin/dev-flow --max-tier 2
 - Reviewer 與 implementer 不共用 session；不可弱化 read-only reviewer 的工具 allowlist。
 - 動到 `toolsFor()`、`test-runner.ts` 的執行方式、或任何「這是 prompt 請求還是程式碼強制」的分野時，同步更新 README 的 Threat model。那一節逐項對應實際程式碼，漂掉就會變成會說謊的安全文件，比沒有更糟。
 - README 的「成本」一節與 `src/models.ts` 的註解共用同一批實測數字。改動 `modelFor()`、`DEFAULT_MAX_TIER` 或重新量測成本時，兩處一起改，並註明量測日期與 run 數。公開的數字沒有出處就是行銷文案。
-- MVP 停在 `ready_for_main`，不自動 commit 或 push。
+- 核心 CLI/Pi orchestrator 停在 `ready_for_main`，不自動 commit 或 push。可選的 GitHub queue wrapper 只在同一套 gates 通過後發布隔離 branch 與 Draft PR，不 merge 或 deploy。
+- 修改 queue labels、claim、failure recovery、worktree 或 publication 時，同步更新 `docs/modules/github-issue-queue.md`、README Threat model 與 `docs/rules/testing-and-safety.md`。
 - 輪次上限只允許出現在 `src/policies/completion-policy.ts`；`orchestrator.ts` 的失敗分支一律呼叫 `nextCycle`。
 - `applyBudget` 不得原地改寫 `request.artifacts`；ledger 必須保留未截斷的原件。
 - 任何提前結束的路徑都必須經過 `finish()`；runtime exception 也要先落地成 `failed` summary 再往外拋。

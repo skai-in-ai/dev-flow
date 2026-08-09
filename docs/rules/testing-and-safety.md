@@ -37,7 +37,8 @@ READY_FOR_MAIN · Tier <n> · <cycle>/<maxCycles> cycles
 - Handoff 的 `tests` 是 shell command，僅可接受受信任來源。
 - GitHub Issue body/title/labels/repository are untrusted input. The approved spec parser rejects missing sections, unresolved items, and prose tests; raw tests still execute with `shell: true`, so `dev-flow-ready` is approval but not a sandbox.
 - Queue repository selection is code-enforced by the owner/repository allowlist, a `DEV_FLOW_WORKSPACE_ROOT` constrained to `/Users/skai.wu/side` or a descendant, realpath workspace-root containment, existing Git checkout check, and an `origin` URL matching the allowlisted owner/repository. Worktree and branch names are derived from issue number/title after normalization; the primary working tree is not cleaned or reset.
-- Queue publication is code-gated on `ready_for_main` and successful deterministic tests/reviews. Non-success outcomes do not push; merge and deployment are not implemented. Issue writeback errors are non-zero and retained in the local queue ledger.
+- Queue publication is code-gated on `ready_for_main` and successful deterministic tests/reviews. Non-success before publication does not push. If PR creation or Issue writeback fails after push, the worker attempts to delete its remote branch; a failed cleanup is surfaced as `needs_human` and retained in the local queue ledger. Merge and deployment are not implemented.
+- GitHub claim refs make one Issue one-shot in the current MVP. Re-running requires a new Issue; retained worktrees and queue ledgers require periodic human cleanup after diagnosis.
 - Spec tool 會拒絕明顯的自然語言測試敘述，但不等同 shell sandbox；approved spec 仍是受信任輸入。
 - Implementer 有 bash 與寫檔能力；Pi 層的 tool allowlist 限制工具種類，但不是容器或 OS sandbox。
 - `scope.include/exclude` 目前是 routing/review contract，沒有 deterministic path enforcement。

@@ -247,6 +247,8 @@ DEV_FLOW_FAKE_ISSUES=/path/to/issues.json bin/dev-flow-worker --dry-run
 
 `--dry-run` 不會呼叫 GitHub、建立 git worktree、commit、push 或建立 PR。排程可參考 [launchd 範例](deployment/dev-flow-worker.plist.example)；本專案不會自動安裝或載入它，請先檢查環境變數再手動啟用。
 
+Issue 的 label lifecycle 是 `dev-flow-ready` → `dev-flow-running` → `dev-flow-pr-ready` / `dev-flow-needs-human`。目前一個 Issue 只允許一次 GitHub-side claim；需重跑時建立新 Issue。worktree 與 job ledger 會保留供診斷，不會自動清理。完整的 contract、失敗語意、部署與操作限制見 [GitHub Issue queue 模組文件](docs/modules/github-issue-queue.md)。
+
 ## 有對外 API 嗎？
 
 **目前沒有。**

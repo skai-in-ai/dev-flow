@@ -90,6 +90,8 @@ npm run orchestrate -- --handoff /absolute/path/handoff.json
 
 `bin/dev-flow-worker` 是單次 poll worker，每輪最多 claim 一個 open `dev-flow-ready` Issue。Issue 必須符合 `examples/github-issue-template.md` 的 approved spec 契約；人工 label 是 approval 邊界，但不是 sandbox。Worker 只接受設定 allowlist 的 owner/repository，從 workspace root 下已存在 checkout 建立獨立 worktree 與 `codex/issue-<number>-<slug>` branch。既有 orchestrator 的 Luna-first cycle matrix 與 max-tier cap 不變；只有 `ready_for_main` 和 deterministic gates 全通過才 commit、push、建立 Draft PR。
 
+完整 label state machine、GitHub-side claim、failure recovery、launchd 與目前操作限制見 `docs/modules/github-issue-queue.md`。
+
 ## Runtime 資料
 
 `.orchestrator/` 會加入目標 repo 的 Git exclude，不進入版控。每次 run 保存 handoff、routing、各角色輸出、測試輸出與 summary。
