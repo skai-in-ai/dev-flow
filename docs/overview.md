@@ -81,10 +81,14 @@ npm run orchestrate -- --handoff /absolute/path/handoff.json
 | Deterministic tests | 執行 handoff 或 config 提供的 shell commands |
 | Audit ledger | 寫入目標 repo 的 `.orchestrator/runs/` |
 | Spec-first handoff | `.agent/specs/` 文件與 session-local pointer |
-| 自動 commit / push | 未實作 |
-| 自動建立 PR / 合併 | 未實作 |
+| 自動 commit / push | GitHub queue 成功 gate 後才對隔離 branch 執行 |
+| 自動建立 PR / 合併 | queue 建立 Draft PR；不自動合併 |
 | 人工 approval UI | handoff 有欄位，但 MVP 僅停在 `ready_for_main` |
 | Provider-agnostic adapter | contract 已抽象化；目前只有 Pi process adapter |
+
+## GitHub Issue queue
+
+`bin/dev-flow-worker` 是單次 poll worker，每輪最多 claim 一個 open `dev-flow-ready` Issue。Issue 必須符合 `examples/github-issue-template.md` 的 approved spec 契約；人工 label 是 approval 邊界，但不是 sandbox。Worker 只接受設定 allowlist 的 owner/repository，從 workspace root 下已存在 checkout 建立獨立 worktree 與 `codex/issue-<number>-<slug>` branch。既有 orchestrator 的 Luna-first cycle matrix 與 max-tier cap 不變；只有 `ready_for_main` 和 deterministic gates 全通過才 commit、push、建立 Draft PR。
 
 ## Runtime 資料
 

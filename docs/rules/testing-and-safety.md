@@ -10,6 +10,10 @@ npm test
 
 此命令先執行兩套 TypeScript build，再用 Node.js test runner 跑 `dist/test/*.test.js`。測試目前涵蓋 routing floor、tier/model mapping（含 cycle 階梯與 tier 上限）、cycle 計數與最後一次修正的完整驗證、decision log 回流、`needs_spec` 出口與 spec 回寫、baseline 預檢、相同失敗熔斷、崩潰寫出 `failed` summary、prompt 預算截斷、dev-flow gating、報告渲染、test runner、spec round-trip/lifecycle、測試命令驗證、Pi JSONL parsing、router zero-tools、JSON verdict aliases、無測試提示與 linked worktree ledger。
 
+## GitHub queue local checks
+
+Use `DEV_FLOW_DRY_RUN=1`/`--dry-run` with a local JSON fixture in `DEV_FLOW_FAKE_ISSUES`; this path has no GitHub, remote branch, commit, or PR side effects. The worker requires `DEV_FLOW_ALLOWED_REPOS` and resolves only an already-existing checkout below `DEV_FLOW_WORKSPACE_ROOT` (default `/Users/skai.wu/side`). It claims one Issue under an atomic local single-writer poll lock (which recovers an orphaned/dead or 30-minute-stale lock and records that recovery), then uses an atomic GitHub ref creation as the cross-Mac claim before performing the `gh issue edit` label transition and recording a job ledger. The checkout origin must match the allowlisted owner/repository. Verify `gh auth status` separately; an expired token means there is no real E2E claim.
+
 ## 真實 E2E
 
 單元測試使用 fake agent。要驗證登入、模型名稱、Pi CLI flags 與真實 reviewer output，需在一次性乾淨 Git repo 執行完整 handoff，確認結果為：
@@ -31,6 +35,9 @@ READY_FOR_MAIN · Tier <n> · <cycle>/<maxCycles> cycles
 ## 信任邊界
 
 - Handoff 的 `tests` 是 shell command，僅可接受受信任來源。
+- GitHub Issue body/title/labels/repository are untrusted input. The approved spec parser rejects missing sections, unresolved items, and prose tests; raw tests still execute with `shell: true`, so `dev-flow-ready` is approval but not a sandbox.
+- Queue repository selection is code-enforced by the owner/repository allowlist, a `DEV_FLOW_WORKSPACE_ROOT` constrained to `/Users/skai.wu/side` or a descendant, realpath workspace-root containment, existing Git checkout check, and an `origin` URL matching the allowlisted owner/repository. Worktree and branch names are derived from issue number/title after normalization; the primary working tree is not cleaned or reset.
+- Queue publication is code-gated on `ready_for_main` and successful deterministic tests/reviews. Non-success outcomes do not push; merge and deployment are not implemented. Issue writeback errors are non-zero and retained in the local queue ledger.
 - Spec tool 會拒絕明顯的自然語言測試敘述，但不等同 shell sandbox；approved spec 仍是受信任輸入。
 - Implementer 有 bash 與寫檔能力；Pi 層的 tool allowlist 限制工具種類，但不是容器或 OS sandbox。
 - `scope.include/exclude` 目前是 routing/review contract，沒有 deterministic path enforcement。

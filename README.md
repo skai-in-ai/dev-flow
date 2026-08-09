@@ -1,6 +1,6 @@
 # Agent Orchestrator
 
-直接推 main 前的隔離實作與 review MVP。它使用 Pi child process（每個角色均為新 session），但終點只會是 `ready_for_main`，絕不自行 commit、push 或變動 main。
+直接推 main 前的隔離實作與 review MVP。一般 CLI/Pi 流程使用 Pi child process（每個角色均為新 session），終點只會是 `ready_for_main`，不自行 commit、push 或變動 main；GitHub queue 另有明確 gate 後的隔離 branch 發布流程。
 
 ## Workflow
 
@@ -105,10 +105,10 @@ Pi CLI 本身也沒有提供檔案系統沙箱、路徑白名單或目錄限制�
 
 這個分野很重要，因為前者可以被模型忽略：
 
-- **程式碼強制**：reviewer 的唯讀工具集、reviewer 與 implementer 不共用 session、測試由外部固定指令執行且結果不經 LLM 判斷、修正次數上限、baseline 測試預檢、流程停在 `ready_for_main` 而不呼叫 commit 或 push。
+- **程式碼強制**：reviewer 的唯讀工具集、reviewer 與 implementer 不共用 session、測試由外部固定指令執行且結果不經 LLM 判斷、修正次數上限、baseline 測試預檢；一般 CLI/Pi orchestrator 流程停在 `ready_for_main`，不呼叫 commit 或 push。GitHub queue worker 則只在同一 gate 與 deterministic tests/reviews 全部通過後，對它自己建立的隔離 branch 呼叫 commit、push 與 Draft PR，且不 merge 或部署。
 - **僅為 prompt 請求**：`renderPrompt()` 裡的 `Never run git commit, git push, git reset, git checkout, or mutate main`，以及 implementer 指示中的「不要改動與需求無關的檔案」。這些是寫給模型看的約束，沒有執行層的攔截。
 
-換句話說，「不會自動 commit」成立的原因是 orchestrator 不去呼叫 commit，不是 implementer 被禁止呼叫 commit。
+換句話說，「一般流程不會自動 commit」成立的原因是 orchestrator 不去呼叫 commit；queue worker 是不同的明確發布入口，不是 implementer 被禁止呼叫 commit。
 
 ### `AGENT_ORCHESTRATOR_WORKSPACE_ROOT` 擋的是什麼
 
@@ -147,6 +147,16 @@ implementer 會讀取 repo 內的檔案，內容會進入 prompt。配上不受�
 MIT。見 `LICENSE`。
 
 `package.json` 的 `private: true` 是防止誤發佈到 npm 的開關，與授權無關。這個 repo 是拿來 clone 的，不是拿來 `npm install` 的。
+
+## GitHub Issue queue
+
+The optional `bin/dev-flow-worker` performs one poll and claims at most one open Issue carrying the human-added `dev-flow-ready` label. The flow is: ChatGPT reads the repo → creates the approved spec Issue → a human adds `dev-flow-ready` → Mac worker runs the existing Luna-first dev-flow in an isolated worktree → pushes `codex/issue-<number>-<slug>` and opens a Draft PR → ChatGPT reviews the PR. It never merges or deploys.
+
+Configure `DEV_FLOW_ALLOWED_REPOS=OWNER/REPOSITORY[,OWNER/OTHER]`, `DEV_FLOW_WORKSPACE_ROOT` (default `/Users/skai.wu/side`; it must remain at or below that fixed root), optional `DEV_FLOW_MAX_TIER` (default `1`), and optional `DEV_FLOW_QUEUE_LEDGER`. The matching checkout must already exist below the workspace root, be a Git worktree, and have an `origin` URL matching the allowlisted `OWNER/REPOSITORY`; a same-named checkout from another owner is rejected. The worker uses an atomic local poll lock so one Mac cannot list/claim the same queue concurrently. Authenticate `gh` with permission to read/edit Issues, push branches, and create pull requests (`gh auth status`); this MVP does not claim a real GitHub E2E when authentication is unavailable.
+
+Issue bodies must follow [the approved template](examples/github-issue-template.md). `status: approved`, `max_tier`, all required sections, raw executable tests, and an empty `Unresolved items` section are mandatory. `--dry-run` uses `DEV_FLOW_FAKE_ISSUES=/path/to/issues.json` and performs no GitHub, git, push, or PR writes. A launchd example is in `deployment/dev-flow-worker.plist.example`; install it manually only after reviewing the environment (this project does not load it).
+
+The Issue body, title, labels, and repository metadata are untrusted input. The allowlist and workspace-root checks prevent selecting an arbitrary checkout, but `dev-flow-ready` is approval—not a sandbox: tests use shell execution and the implementer still has local tools and user permissions. A failed writeback returns non-zero and keeps a local ledger under `.orchestrator/queue-jobs/`.
 
 ## Local verification
 

@@ -68,6 +68,17 @@ sequenceDiagram
 - 所有 child process 使用 `--no-extensions`，避免載入 Remote Pi 或專案 extension。
 - Reviewer 只接收 handoff、最終 diff、測試輸出與根目錄 `CLAUDE.md`，不接收 implementer conversation。
 
+## GitHub queue boundary
+
+```text
+ChatGPT/repo → approved Issue → human dev-flow-ready → one Mac poll
+  → atomic GitHub claim ref → ready→running label transition → allowlisted checkout/worktree
+  → existing Luna-first orchestrator → ready_for_main + tests/reviews
+  → codex branch → commit/push → Draft PR → human/ChatGPT review
+```
+
+`GhCliAdapter` uses `gh` argv and structured JSON for reads; Issue text is passed as an argv value, never interpolated into a shell command. The worker records a local queue ledger before external work. `needs_human`, clarification, runtime errors, or writeback failures never publish a branch result. No merge or deployment is performed.
+
 ## Ledger
 
 ```text

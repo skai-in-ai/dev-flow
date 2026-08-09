@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>tw.lifestay.dev-flow-worker</string>
+  <key>ProgramArguments</key><array><string>/Users/skai.wu/side/agent-orchestrator/bin/dev-flow-worker</string></array>
+  <key>EnvironmentVariables</key><dict>
+    <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    <key>DEV_FLOW_ALLOWED_REPOS</key><string>OWNER/REPOSITORY</string>
+    <key>DEV_FLOW_WORKSPACE_ROOT</key><string>/Users/skai.wu/side</string>
+    <key>DEV_FLOW_MAX_TIER</key><string>1</string>
+  </dict>
+  <key>StartInterval</key><integer>300</integer>
+  <key>RunAtLoad</key><false/>
+  <key>StandardOutPath</key><string>/tmp/dev-flow-worker.out</string>
+  <key>StandardErrorPath</key><string>/tmp/dev-flow-worker.err</string>
+</dict></plist>

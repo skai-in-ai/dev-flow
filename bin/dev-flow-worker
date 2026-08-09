@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Single poll; intended for launchd. It never merges or deploys.
+set -euo pipefail
+ORCHESTRATOR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+npm --prefix "$ORCHESTRATOR" run --silent build
+exec node "$ORCHESTRATOR/dist/github-queue-cli.js" "$@"
