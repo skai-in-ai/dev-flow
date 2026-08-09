@@ -42,19 +42,21 @@ Issue body 必須使用 `examples/github-issue-template.md`，並包含：
 - Risks
 - Unresolved items
 
-`Invariants and non-goals` 可省略以相容 legacy Issues；若存在則只描述合理、可到達的 invariant 類別與明確不做的範圍，不要求涵蓋每個理論 sibling。`Unresolved items` 必須是 `none`，或等價的空值表示；任何待答內容都會阻擋執行。Tests 是 raw、trusted shell commands，會直接以 shell 執行，因此加 label 前必須像 review code 一樣 review spec。
+`Invariants and non-goals` 可省略以相容 legacy Issues；若存在則只描述合理、可到達的 invariant 類別與明確不做的範圍，不要求涵蓋每個理論 sibling。`Unresolved items` 必須是 `none`，或等價的空值表示；任何待答內容都會阻擋執行。Tests 是 raw、trusted shell commands，會直接以 shell 執行，因此加入 ready label 前必須像 review code 一樣 review spec。
+
+Queue parser 的 fail-closed contract 僅是 deterministic 的：`status: approved`、每個 required section 的非空或合法 list 結構、已移除官方 `dev-flow-required` marker、空的 unresolved items，以及 raw executable test commands。它不會嘗試從任意 prose 推論語意完整度，也不維護 `TODO`、`later` 或其他詞彙 blacklist；語意審核屬於獨立的 Spec Gate，非本 queue parser 的責任。
 
 ### Mobile approval flow
 
-1. 在 repository 的 **New issue** 頁面選 **Dev-flow task**，填完每個 section 後建立 Issue（這仍是 draft）。
-2. 用 mobile web 編輯 body：確認 `status: approved`、`max_tier`、Tests 命令與 `Unresolved items: none`，再儲存。
-3. 人工確認 scope、acceptance criteria 與 shell commands 後，才加入 `dev-flow-ready`；這個 label 才是 approval，template 不會自動加入。未完成或未核准的 Issue 不會啟動 agent。
+1. 在 repository 的 **New issue** 頁面選 **Dev-flow task**，建立或繼續編輯 `status: draft` 的 body。
+2. 移除每個官方 placeholder，填 required sections，將 `status` 改為 `approved`，並確認 Tests 命令與 `Unresolved items: none`。
+3. 加入 `dev-flow-ready` 授權 queue 執行；這個 label 不會由 template 自動加入。draft、空 section、官方 placeholder 或未決項目都不會啟動 agent。
 
 ## Label lifecycle
 
 | Label | 意義 |
 |:---|:---|
-| `dev-flow-ready` | 人工確認 spec 可執行，進入 queue |
+| `dev-flow-ready` | 已授權 spec 進入 queue |
 | `dev-flow-running` | Worker 已 claim，正在本機執行 |
 | `dev-flow-pr-ready` | 已產生 Draft PR，等待 review |
 | `dev-flow-needs-human` | spec、runtime、review、GitHub writeback 或 cleanup 需人工處理 |

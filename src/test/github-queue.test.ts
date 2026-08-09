@@ -42,6 +42,14 @@ test("installed GitHub template and example preserve the queue contract", () => 
   assert.throws(() => parseIssueSpec(issue(approvedTemplate)), /incomplete template placeholders/);
 });
 
+test("queue parser fails closed for draft, empty sections, and official template markers only", () => {
+  assert.throws(() => parseIssueSpec(issue(valid.replace("status: approved", "status: draft"))), /status must be approved/);
+  assert.throws(() => parseIssueSpec(issue(valid.replace("- src\/a.ts", ""))), /at least one bullet/);
+  assert.throws(() => parseIssueSpec(issue(valid.replace("Change the behavior.\nMore detail.", "<!-- dev-flow-required: fill this in -->"))), /incomplete template placeholders/);
+  const arbitraryProse = valid.replace("Change the behavior.\nMore detail.", "TODO: decide later after discovery.");
+  assert.equal(parseIssueSpec(issue(arbitraryProse)).spec.objective, "TODO: decide later after discovery.");
+});
+
 test("queue parser carries the optional invariants and non-goals section", () => {
   const parsed = parseIssueSpec(issue(valid.replace("## Scope include", "## Invariants and non-goals\n- Preserve existing login behavior\n- Do not change the public API\n\n## Scope include")));
   assert.deepEqual(parsed.spec.invariantsAndNonGoals, ["Preserve existing login behavior", "Do not change the public API"]);

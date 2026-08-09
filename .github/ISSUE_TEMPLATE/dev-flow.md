@@ -12,7 +12,7 @@ max_tier: 1
 
 # Dev-flow task
 
-Complete every section below before requesting execution. Change `status` to `approved` only after the task is complete, then have a human add the `dev-flow-ready` label. Creating or editing an Issue is only a draft; the label is the explicit approval gate. The template never adds that label automatically. Tests are raw, trusted shell commands executed verbatim; review them before approval.
+Replace every `dev-flow-required` placeholder, then change `status` to `approved` and add the `dev-flow-ready` label when the task is authorized for execution. Creating or editing an Issue is only a draft; the template never adds that label automatically. Tests are raw, trusted shell commands executed verbatim; review them before authorization. The queue deterministically checks status, required-section structure, official placeholders, unresolved items, and test-command format; it does not infer whether arbitrary prose is semantically complete.
 
 ## Objective
 <!-- dev-flow-required: replace this placeholder with the concrete desired change. -->
@@ -40,4 +40,3 @@ none
 
 ## Unresolved items
 <!-- dev-flow-required: resolve every open question before approval; write `none` only when there are no unresolved items. -->
-
