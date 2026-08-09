@@ -1,65 +1,68 @@
-# Agent Orchestrator
+# dev-flow
 
-一套以 **LLM-as-a-Judge** 為核心的自動化開發流程。一般 CLI/Pi 流程使用 Pi child process（每個角色均為新 session），終點只會是 `ready_for_main`，不自行 commit、push 或變動 main；可選的 GitHub Issue queue 才會在完整 gate 後，發布隔離 branch 的 Draft PR。
-
-它讓主控的 supervisor 只需要確認需求、呼叫一次 `/dev-flow`，之後由隔離的 implementer、reviewer 與 deterministic tests 自動完成實作、審查、修正與結果整理。人工只在需求尚未定義、流程卡住，或最後準備接收變更時介入。
-
-```text
-人 ↔ Supervisor
-      │
-      │ 確認需求並呼叫 /dev-flow
-      ▼
-Agent Orchestrator
-      ├─ implement
-      ├─ deterministic tests
-      ├─ isolated review
-      ├─ 自動修正與重審
-      ├─ 累積 findings / 解法 / 理由
-      └─ ready_for_main 或 needs_human
-      │
-      ▼
-Supervisor ↔ 人
-```
-
-> 這個專案的目標不是再做一個 coding agent，而是把「需求已確認後的開發、驗證與回饋循環」自動化。
-
-作者已將它用於十多輪實際開發流程，目前運作正常；但它仍是持續演進中的 experimental MVP，不應被視為已完成的大規模 benchmark 或無人監督的生產系統。
-
-開源的目的有兩個：**促進 agentic development workflow 的技術討論，以及展示一套可實際運作的低成本 orchestration 設計。**
+**把「需求已經確認之後」的開發、驗證與回饋循環自動化。** 這個專案的目標不是再做一個 coding agent。
 
 ## 它解決什麼問題
 
-一般使用 coding agent 時，人往往仍要反覆做這些事：
+用 coding agent 寫東西時，模型很少是瓶頸。瓶頸是人得一直當中間人：
 
 1. 把需求交給實作者。
-2. 檢查實作是否偏離需求。
+2. 檢查實作有沒有偏離需求。
 3. 執行測試。
 4. 把 review 意見貼回實作者。
-5. 判斷是否需要更強的模型。
-6. 整理每一輪到底發現、修改和保留了什麼。
+5. 判斷這件事是不是該換更強（更貴）的模型。
+6. 整理每一輪到底發現了什麼、改了什麼、為什麼保留。
 
-Agent Orchestrator 將這段流程變成一個可重複執行的閉環：
+這六件事單獨看都不難，但它們會在每一次修正循環重複一遍，而且**沒有一件需要你的判斷力** —— 需要判斷力的是第一步之前（要做什麼）和最後一步之後（這個結果收不收）。中間全是搬運。
+
+更麻煩的是第 6 點。每個 review 都是新的 session，看不到前幾輪的脈絡，於是同一個疑慮會被重新提出來，而上一輪已經做過的取捨裁決會消失。人不補這個記憶，循環就會原地打轉。
+
+dev-flow 把中間那段變成一個可重複執行、可稽核、會累積記憶的閉環，並且**刻意保留兩端的人工邊界**。
+
+## 整體流程
 
 ```text
-approved spec / handoff
-  → baseline test preflight
-  → risk routing
-  → implement
-  → actual diff risk scan
-  → deterministic tests
-  → isolated reviewer
-  → fix / escalate / needs_spec
-  → ready_for_main 或 needs_human
+人 ↔ Supervisor（Claude Code / Pi，人在哪就在哪）
+      │
+      │ 討論到需求收斂，呼叫一次 /dev-flow
+      ▼
+┌─ dev-flow ─────────────────────────────┐
+│  baseline 測試預檢（不過就零成本拒絕）    │
+│  risk routing（deterministic + 模型）    │
+│  implement（隔離 session）               │
+│  依實際 diff 重新評估風險（只升不降）      │
+│  deterministic tests（程式判定，非模型）  │
+│  isolated review（唯讀，另一個 session）  │
+│  ├─ pass    → 收斂                       │
+│  ├─ fail    → 帶著累積 findings 再修一輪  │
+│  ├─ escalate→ 升 tier 原地重審           │
+│  └─ needs_spec → 缺口寫回 spec，回到討論  │
+└────────────────────────────────────────┘
+      │
+      ├─ ready_for_main ─→ 人接收 diff（CLI/Pi 到此為止，不 commit）
+      └─ needs_human ────→ 保留現場，等人決定
+                              │
+                    （GitHub queue 專有）
+                              ▼
+                  人在原 Issue 留 resume 決策
+                              ▼
+                    從保留的現場增量續跑
 ```
 
-正常情況下，人不需要介入每一次 review 和修正。只有下列情況會回到 supervisor：
+最多三次修正（共四次實作）。升 tier 與 `needs_spec` 不消耗額度；相同失敗連續兩輪直接熔斷，不把剩下的額度燒完。
 
-- 需求或產品語意沒有定義完整。
-- reviewer 要求的風險等級超過允許上限。
-- 相同問題連續出現，再重試也沒有意義。
-- 修正次數用盡。
-- runtime 發生例外。
-- 流程完成，等待接收最終 diff。
+**兩條入口的差別只在交付邊界：**
+
+| 入口 | 觸發 | 終點 |
+|:---|:---|:---|
+| CLI / Pi（`/dev-flow`、`bin/dev-flow`） | 人在 session 裡呼叫 | 停在 `ready_for_main`，**不 commit、不 push、不碰 main** |
+| GitHub Issue queue（`bin/dev-flow-worker`） | 人在 Issue 加 `dev-flow-ready` label | 同一套 gate 全過後 push 隔離 branch + 開 Draft PR，**不 merge、不部署** |
+
+回到人手上的情況只有這幾種：需求或產品語意沒定義完整、reviewer 要求的風險超過允許上限、相同問題重複出現、修正額度用盡、runtime 例外，或流程完成等你收 diff。
+
+> 作者已將它用於十多輪實際開發流程，目前運作正常；但它仍是持續演進中的 experimental MVP，不應被視為已完成的大規模 benchmark 或無人監督的生產系統。
+
+開源的目的有兩個：**促進 agentic development workflow 的技術討論，以及展示一套可實際運作的低成本 orchestration 設計。**
 
 ## 核心特色
 
@@ -206,7 +209,17 @@ bin/dev-flow --max-tier 2
 
 - 若 report 帶有 `needs_spec` / `specGap`，先澄清產品語意、更新 spec，再重跑；不需要建立 checkpoint。
 - 若是乾淨 baseline 的 preflight 失敗，先修正環境或既有程式碼，再重跑；這也不是 checkpoint bridge 的情境。
-- 只有在實作或 review 已經產生要保留的變更、且需要人工修正時，才先確認保留 worktree 的 provenance，建立 local checkpoint commit，再由人選擇 narrow fix，最後做 targeted follow-up review。這是手動 checkpoint bridge；不會自動 commit、push、restart 或 discard。經 GitHub queue 執行時，另有由 provenance、授權 comment 與 attempt claim 保護的 Same-Issue Resume。
+- 只有在實作或 review 已經產生要保留的變更、且需要人工修正時，才先確認保留 worktree 的 provenance，建立 local checkpoint commit，再由人選擇 narrow fix，最後做 targeted follow-up review。這是手動 checkpoint bridge；不會自動 commit、push、restart 或 discard。
+
+經 GitHub queue 執行時，同一件事有自動化版本：**Same-Issue Resume**。流程停在 `needs_human` 時，worker 會保留 worktree 與 branch，把現場狀態寫進 `.orchestrator/queue-provenance.json`，並在原 Issue 貼出一份繁體中文報告（未解 findings、上一輪實作回應、變更檔案、失敗驗證、成本）。你看完之後在同一個 Issue 留言：
+
+```text
+/dev-flow resume narrow fix 只改 X，不要動 Y
+```
+
+下一輪 poll 就會從**同一個現場**接著跑，而不是從頭重來。它要求三件事同時成立才動：Issue 帶 `dev-flow-resume`、留言者有 repository 寫入權限、留言時間晚於最新那則報告。三者有任一不成立，worker 直接跳過這個 Issue 去處理下一個，不留言也不改 label —— 等人回覆是靜止狀態，不是失敗，更不該每 300 秒洗版一次。
+
+現場對不上（provenance 遺失、損壞，或 worktree 有沒被記錄的變動）就停在 needs-human 並附診斷。**沒有任何自動路徑會重建或捨棄你的現場**，那是人的決定。
 
 ### 9. 不自動 commit、push 或 merge
 
@@ -230,8 +243,10 @@ ChatGPT 讀取 repo
   → 人加入 dev-flow-ready
   → Mac worker
   → isolated worktree + Luna-first dev-flow
-  → codex/issue-<number>-<slug> branch + Draft PR
-  → ChatGPT review PR
+  ├─ ready_for_main → codex/issue-<number>-<slug> branch + Draft PR → ChatGPT / 人 review PR
+  └─ needs_human   → 保留 worktree + Issue 上的繁中報告
+                      → 人留 /dev-flow resume narrow fix <說明>
+                      → 從同一個現場續跑（回到上一行）
 ```
 
 這是一般 CLI/Pi 流程以外的明確發布入口。只有 `ready_for_main` 且 deterministic tests 與 review gates 全部通過時，worker 才會對自己建立的隔離 branch commit、push 並建立 Draft PR；它不會 merge 或部署。非成功結果會標記為 `dev-flow-needs-human`、保留 ledger，並讓下一個 queue 項目繼續執行。
@@ -469,7 +484,11 @@ reviewer 的 read-only allowlist 是程式碼強制；implementer 則擁有 `bas
 - **程式碼強制**：reviewer 的唯讀工具集、角色 session 隔離、baseline 與 deterministic tests、修正次數上限。一般 CLI/Pi flow 到 `ready_for_main` 就停止；queue worker 只有在同一套 gate 全通過後，才會對它建立的隔離 branch commit，從 approved spec、structured outcome verification 與 post-commit Git metadata 建立 typed delivery payload，再 push 和建立 Draft PR。PR body 不接受或渲染 report、Pi events、agent output、prompts 或 ledger；缺少、malformed、測試失敗或 reviewer 非 pass 的 evidence 會在 push 前阻擋 publication。允許字串會以 plain text escape 並受逐欄、列表及整體 body 上限限制；它不會 merge 或部署。
 - **僅為 prompt 請求**：`renderPrompt()` 中的「不要 `git commit`、`git push`、`git reset`、`git checkout` 或修改 main」，以及「不要修改需求外檔案」。同樣地，`src/adapters/pi/pi-process-adapter.ts` 裡要求 implementer 檢查合理且可到達的同 invariant 類別 sibling cases、補 regression tests，以及要求 reviewer 批次檢查同類別可到達且已核准的路徑、遵守 non-goals，都是 prompt-only guidance，不是程式碼強制。模型可以忽略這些文字，並沒有執行層攔截。
 
-另外，spec / handoff 內的測試命令會以 shell 直接執行，因此它們與程式碼具有相同的信任要求。GitHub Issue queue 的 title、body、labels 和 repository metadata 同樣是不受信任的輸入；allowlist 與 workspace-root 檢查只防止選到任意 checkout，`dev-flow-ready` 是人工 approval，不是 sandbox。
+另外，spec / handoff 內的測試命令會以 shell 直接執行，因此它們與程式碼具有相同的信任要求。GitHub Issue queue 的 title、body、labels、repository metadata **與 comments** 同樣是不受信任的輸入；allowlist 與 workspace-root 檢查只防止選到任意 checkout，`dev-flow-ready` 是人工 approval，不是 sandbox。
+
+Resume 決策來自 Issue comment，因此授權是程式碼強制的：worker 讀 `repos/{owner}/{repo}/collaborators/{user}/permission`，以 `user.permissions.push` 這個 boolean 為準（字串 `permission` 只接受 `write`／`maintain`／`admin`，它不會回傳 `push`）。未授權、過期或格式不符的留言一律無效，而且 worker **不會回應它們** —— 回應等於讓任何有留言權限的人驅動無上限的 Issue 寫入。
+
+attempt 編號讀自報告內的 HTML marker，這是已知的殘餘風險：能留言的人可以貼一則假報告，讓一則合法決策看起來過期（阻斷服務），但無法讓過期決策變新鮮，且保留現場記錄的 attempt 仍必須相符。
 
 請遵守：
 
