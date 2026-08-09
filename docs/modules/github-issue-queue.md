@@ -2,7 +2,7 @@
 
 本模組將 GitHub 當作 ChatGPT、人類 approval 與本機 coding agent 之間的穩定交接層。它是核心 orchestrator 外的可選 wrapper，不改變 Luna-first routing、deterministic tests 或 isolated review。
 
-## 這次新增的重點
+## 入口 B 完整流程
 
 ```text
 人在 ChatGPT 討論需求
@@ -24,6 +24,19 @@
 - Worker 負責 queue、本機 checkout 驗證、worktree 與外部寫入。
 - Core orchestrator 仍只負責 implementation/tests/review，本身仍停在 `ready_for_main`。
 - Draft PR 是自動化交付邊界；不自動 merge 或 deploy。
+
+這是 README 所稱的**入口 B**。若你正在同一個 Pi／Remote Pi session 討論，成功後只需要 working-tree diff，不需要 Issue queue 或 Draft PR，應使用**入口 A**的 `/dev-flow`；見 [手機與 Pi 入口](mobile-entrypoint.md)。
+
+## 使用時機
+
+使用入口 B 的情況：
+
+- 從手機或外部 ChatGPT 建立 durable task handoff。
+- 多個任務要由本機 worker 排隊處理。
+- 需要每個任務使用 isolated worktree／branch。
+- 希望完整 gates 通過後自動得到 Draft PR。
+
+不要為了單次、正在互動的本機修改繞 GitHub 一圈；那種情況使用入口 A 即可。
 
 ## Issue contract
 
@@ -71,12 +84,6 @@ Worker 只選 open 且帶 `dev-flow-ready` 或 `dev-flow-resume` 的 Issue，每
 已知近似：`createdAt` 是 Issue 建立時間，不是加上 `dev-flow-ready` 的時間。長期擱置後才核准的 Issue，會排在「較晚建立但立刻核准」的 Issue 前面。精確版本需查 label 事件時間（`gh api repos/{owner}/{repo}/issues/{n}/timeline`），成本高一個等級，目前刻意不做。
 
 Resume 用同一條排序：`dev-flow-resume` 不會插隊，等待中的初次 Issue 也不會被它擠掉。
-
-## 選取順序
-
-跨 repository 以 Issue `createdAt` 遞增排序，取第一個。Issue 編號是 per-repository 的計數器，單以編號排序會讓新加入 allowlist 的 repository（從 #1 開始）永久插隊到既有 repository 前面。採 `createdAt` 而非 `updatedAt`，是為了讓編輯 Issue body 不會把它推到隊尾。時間戳完全相同時才以 repository 名稱與 Issue 編號打破平手（以 code unit 比較，不用 locale-dependent 的 `localeCompare`，否則不同機器的 worker 可能對同一個 queue 得出不同順序），確保選取是決定性的；時間戳缺漏或無法解析的 Issue 排在最後，不會靜默插隊。
-
-已知近似：`createdAt` 是 Issue 建立時間，不是加上 `dev-flow-ready` 的時間。長期擱置後才核准的 Issue，會排在「較晚建立但立刻核准」的 Issue 前面。精確版本需查 label 事件時間（`gh api repos/{owner}/{repo}/issues/{n}/timeline`），成本高一個等級，目前刻意不做。
 
 ## Claim 與重複防護
 
