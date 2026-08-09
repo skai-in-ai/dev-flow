@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { acquirePollLock, draftPullRequestBody, MAX_DRAFT_PR_BODY_BYTES, parseIssueSpec, publicationFiles, queueConfig, worktree, type QueueIssue } from "../github-queue.js";
+import { acquirePollLock, claimRef, cumulativeResumeEvidence, draftPullRequestBody, MAX_DRAFT_PR_BODY_BYTES, nextAttempt, parseIssueSpec, parseResumeDecision, publicationFiles, queueConfig, renderNeedsHumanReport, validateRetainedWorktree, worktree, worktreePath, type QueueComment, type QueueIssue } from "../github-queue.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -61,6 +61,41 @@ test("queue parser carries the optional invariants and non-goals section", () =>
   assert.deepEqual(parsed.spec.invariantsAndNonGoals, ["Preserve existing login behavior", "Do not change the public API"]);
 });
 
+test("attempt claims are repository/Issue scoped and resume decisions fail closed", () => {
+  assert.equal(nextAttempt(undefined), 1);
+  assert.equal(nextAttempt(1), 2);
+  const first = claimRef(issue(valid), 1);
+  const second = claimRef({ ...issue(valid), repository: "other/repo" }, 1);
+  assert.match(first, /5-owner_4-repo-issue-12-attempt-1$/);
+  assert.notEqual(first, second);
+  const comment: QueueComment = { id: 7, author: "maintainer", body: "/dev-flow resume narrow fix the failing verification", createdAt: new Date().toISOString() };
+  assert.equal(parseResumeDecision(comment, 1), "narrow fix the failing verification");
+  assert.equal(parseResumeDecision({ ...comment, body: " /dev-flow resume " }, 1), undefined);
+  assert.equal(parseResumeDecision({ ...comment, body: "/dev-flow resume rebuild" }, 1), "rebuild");
+  assert.equal(parseResumeDecision({ ...comment, body: "/dev-flow resume cancel" }, 1), "cancel");
+  assert.equal(parseResumeDecision({ ...comment, body: "/dev-flow resume please decide" }, 1), undefined);
+  assert.equal(parseResumeDecision({ ...comment, createdAt: "stale" }, 1), undefined);
+  assert.equal(parseResumeDecision(comment, 1, new Date(Date.now() + 1_000).toISOString()), undefined);
+  assert.equal(parseResumeDecision(comment, 1, new Date(Date.now() - 1_000).toISOString()), "narrow fix the failing verification");
+});
+
+test("needs-human report renders the required Traditional Chinese recovery evidence", () => {
+  const report = renderNeedsHumanReport({ issueNumber: 12, attempt: 2, reason: "identical failure repeated in cycle 3 and 4", cycles: [{ cycle: 1, attemptedFix: "補上驗證", findings: ["仍失敗"] }], findings: ["仍失敗"], changedFiles: ["src/a.ts"], failedVerification: ["npm test"], costUsd: 0.12, durationMs: 1234, worktree: "/tmp/tree", branch: "codex/issue-12/task", resumeInstructions: "" });
+  assert.match(report, /identical failure repeated in cycle 3 and 4/); assert.match(report, /Attempt 2/); assert.match(report, /變更檔案/); assert.match(report, /失敗驗證/); assert.match(report, /dev-flow-resume/); assert.match(report, /繁體中文|人工決策/);
+});
+
+test("resume context includes every retained attempt's evidence and decision", () => {
+  const evidence = cumulativeResumeEvidence({
+    repository: "owner/repo", issueNumber: 12, branch: "codex/issue-12/safe-task", cwd: "/tmp/tree", baselineSha: "0".repeat(40), status: " M src/a.ts", recordedAt: new Date().toISOString(),
+    findings: ["latest finding"], attemptedFixes: ["latest fix"], testEvidence: [{ command: "npm test", passed: true }], cycles: [{ cycle: 2, attemptedFix: "latest cycle", findings: ["latest finding"] }], changedFiles: ["src/a.ts"], failedVerification: [], decisionLog: "latest decision",
+    attempts: [
+      { attempt: 1, reason: "first stop", cycles: [{ cycle: 1, attemptedFix: "first fix", findings: ["first finding"] }], findings: ["first finding"], changedFiles: ["src/a.ts"], failedVerification: ["npm test"], testEvidence: [{ command: "npm test", passed: false }], costUsd: 0, durationMs: 1 },
+      { attempt: 2, reason: "second stop", cycles: [{ cycle: 1, attemptedFix: "second fix", findings: ["second finding"] }], findings: ["second finding"], changedFiles: ["src/b.ts"], failedVerification: [], testEvidence: [{ command: "npm test", passed: false }], resumeDecision: "narrow fix second", decisionAuthor: "maintainer", costUsd: 0, durationMs: 1 },
+    ],
+  });
+  assert.match(evidence.findings.join("\n"), /first finding/); assert.match(evidence.attemptedFixes.join("\n"), /first fix/); assert.match(evidence.testEvidence.map((test) => test.passed).join(","), /false/); assert.match(evidence.decisionLog, /narrow fix second/);
+});
+
 test("publication includes staged, unstaged, and untracked files without duplicates", () => {
   assert.deepEqual(
     publicationFiles("src/a.ts\nshared.ts\n", "src/b.ts\nshared.ts\n", "new.ts\n"),
@@ -77,15 +112,20 @@ test("draft PR renders only typed reason, Git, scope, and verification evidence"
     report: raw, events: raw, agentOutput: raw, ledger: raw,
   };
   const body = draftPullRequestBody(payload);
-  assert.match(body, /## Why/); assert.match(body, /## How/); assert.match(body, /M src\/a\\\.ts/); assert.match(body, /\\~\\~secret\\~\\~/); assert.match(body, /\\#shell/); assert.match(body, /2 insertions/);
+  assert.match(body, /## 為何/); assert.match(body, /## 如何完成/); assert.match(body, /M src\/a\\\.ts/); assert.match(body, /\\~\\~secret\\~\\~/); assert.match(body, /\\#shell/); assert.match(body, /新增 2 行/);
   assert.ok(!body.includes("RAW_REPORT")); assert.ok(!body.includes("prompt=secret")); assert.ok(!body.includes("/Users/skai.wu/side")); assert.ok(!body.includes("https://localhost")); assert.ok(body.includes("https&#58;//localhost"));
-  assert.match(body, /## Approved scope/); assert.match(body, /## Verification result/); assert.match(body, /PASS: npm test/); assert.match(body, /## Intentionally excluded/);
+  assert.match(body, /## 核准範圍/); assert.match(body, /## 驗證結果/); assert.match(body, /PASS: npm test/); assert.match(body, /## 刻意排除/);
+  const cumulative = draftPullRequestBody({ ...payload, attempts: [
+    { attempt: 1, reason: "第一次 review 未通過", cycles: [{ cycle: 1, attemptedFix: "補上驗證", findings: ["仍有 finding"] }], findings: ["仍有 finding"], changedFiles: ["src/a.ts"], failedVerification: ["npm test"], testEvidence: [{ command: "npm test", passed: false }], costUsd: 0.05, durationMs: 100 },
+    { attempt: 2, reason: "完成修正", cycles: [], findings: [], changedFiles: ["src/a.ts"], failedVerification: [], testEvidence: [{ command: "npm test", passed: true }], resumeDecision: "narrow fix 修正測試", decisionAuthor: "maintainer", costUsd: 0.12, durationMs: 1234 },
+  ] });
+  assert.match(cumulative, /## 累積 Attempts/); assert.match(cumulative, /Attempt 1/); assert.match(cumulative, /第一次 review 未通過/); assert.match(cumulative, /narrow fix 修正測試/); assert.match(cumulative, /FAIL npm test/);
   const escalatedAtTierTwo = draftPullRequestBody({
     issueNumber: 12, objective: "Change behavior", backgroundAndDecisions: "Keep compatibility", risks: [], acceptanceCriteria: ["tests pass"],
     approvedInclude: ["src/a.ts"], approvedExclude: [], git: { files: [{ path: "src/a.ts", status: "M" }], filesChanged: 1, insertions: 2, deletions: 1 },
     tests: [{ command: "npm test", passed: true }], reviewerVerdict: "escalate", finalReviewerVerdict: "pass", status: "ready_for_main", tier: 2, cycles: 2, costUsd: 0.12, durationMs: 1234, runId: "run-2",
   });
-  assert.match(escalatedAtTierTwo, /Reviewer verdict: escalate/);
+  assert.match(escalatedAtTierTwo, /審查 verdict：escalate/);
 });
 
 test("draft PR rejects unsuccessful evidence and cannot accept arbitrary report text", () => {
@@ -122,6 +162,30 @@ test("queue configuration requires an explicit repository allowlist and defaults
   assert.equal(config.workspaceRoot, "/Users/skai.wu/side");
   assert.equal(config.workerId, "test");
   assert.throws(() => queueConfig({ DEV_FLOW_ALLOWED_REPOS: "owner/repo", DEV_FLOW_WORKSPACE_ROOT: "/tmp" }), /inside \/Users\/skai\.wu\/side/);
+});
+
+test("worktree paths cannot collide when owner and repository names contain hyphens", () => {
+  const config = { allowedRepos: ["owner/repo-a", "owner-repo/a"], workspaceRoot: "/Users/skai.wu/side", ledgerRoot: "/tmp/ledger", maxTier: 1 as const, dryRun: false, workerId: "test" };
+  assert.notEqual(worktreePath(config, { ...issue(valid), repository: "owner/repo-a" }), worktreePath(config, { ...issue(valid), repository: "owner-repo/a" }));
+});
+
+test("retained provenance is bound to the expected Issue worktree path and branch", async () => {
+  const root = await mkdtemp("/tmp/dev-flow-retained-");
+  try {
+    const remote = join(root, "remote.git"); const repo = join(root, "repo");
+    await execFileAsync("git", ["init", "--bare", remote]); await execFileAsync("git", ["init", repo]);
+    await execFileAsync("git", ["config", "user.email", "test@example.invalid"], { cwd: repo }); await execFileAsync("git", ["config", "user.name", "Test"], { cwd: repo });
+    await writeFile(join(repo, "file.txt"), "x\n"); await execFileAsync("git", ["add", "file.txt"], { cwd: repo }); await execFileAsync("git", ["commit", "-m", "base"], { cwd: repo });
+    const sha = (await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: repo })).stdout.trim();
+    await execFileAsync("git", ["remote", "add", "origin", "https://github.com/owner/repo.git"], { cwd: repo });
+    const config = { allowedRepos: ["owner/repo"], workspaceRoot: root, ledgerRoot: join(root, "ledger"), maxTier: 1 as const, dryRun: false, workerId: "test" };
+    const expected = worktreePath(config, issue(valid)); await mkdirSync(join(root, ".orchestrator", "worktrees"), { recursive: true });
+    await execFileAsync("git", ["worktree", "add", "-b", "codex/issue-12-safe-task", expected, sha], { cwd: repo });
+    const provenance = { repository: "owner/repo", issueNumber: 12, branch: "codex/issue-12-safe-task", cwd: expected, baselineSha: sha, status: "", recordedAt: new Date().toISOString() };
+    await validateRetainedWorktree(provenance, issue(valid), expected, provenance.branch);
+    await assert.rejects(() => validateRetainedWorktree({ ...provenance, cwd: repo }, issue(valid), expected, provenance.branch), /path/);
+    await assert.rejects(() => worktree(config, repo, issue(valid), { defaultBranch: "main", sha }, undefined, true), /provenance validation/);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test("worktree fetches and starts at the claimed SHA rather than local HEAD", async () => {

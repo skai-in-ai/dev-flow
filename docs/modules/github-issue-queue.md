@@ -60,8 +60,9 @@ Queue parser 的 fail-closed contract 僅是 deterministic 的：`status: approv
 | `dev-flow-running` | Worker 已 claim，正在本機執行 |
 | `dev-flow-pr-ready` | 已產生 Draft PR，等待 review |
 | `dev-flow-needs-human` | spec、runtime、review、GitHub writeback 或 cleanup 需人工處理 |
+| `dev-flow-resume` | 人工已核准下一個 resume attempt；仍需授權 comment |
 
-Worker 只選 open 且帶 `dev-flow-ready` 的 Issue，每次 poll 最多處理一個。不合法 Issue 會移除 ready、標記 needs-human，不會永久卡住後面的 queue。
+Worker 只選 open 且帶 `dev-flow-ready` 或 `dev-flow-resume` 的 Issue，每次 poll 最多處理一個。不合法 Issue 會標記 needs-human，不會永久卡住後面的 queue。
 
 ## Claim 與重複防護
 
@@ -70,7 +71,7 @@ Worker 只選 open 且帶 `dev-flow-ready` 的 Issue，每次 poll 最多處理�
 3. GitHub 上使用 Issue-specific Git ref creation 作 compare-and-set；claim 同時綁定 validated default branch 與 40-character SHA，只有一個 worker 能成功建立。
 4. Claim 成功後才將 label 從 ready 轉為 running。Worktree 建立前只 fetch `origin` 的該 default branch，並驗證 fetched SHA 與 claim 完全一致；不會 merge 或修改 primary checkout。
 
-目前 claim ref 會保留，所以同一 Issue 是 one-shot。若 needs-human 後要重跑，請以更新後 spec 建立新 Issue，不要只重新加 ready label。
+Claim ref 會以 repository、Issue number 與 attempt number 建立並永久保留；同一 Issue 的同一 attempt 只能有一個 worker，但完成的 attempt 不阻擋下一次 resume。`needs_human` 會保留原 worktree、branch、partial code 與 provenance；只有 `dev-flow-resume` label 加上授權協作者在上一 attempt 結束後新增的明確 `/dev-flow resume <decision>` comment 才能啟動下一 attempt。系統不會靜默重建遺失或損壞的 worktree。
 
 ## Repo 與 worktree 邊界
 
@@ -86,7 +87,7 @@ Worker 不從 Issue body 接受絕對路徑。它將 `OWNER/REPOSITORY` 對應�
 每個 job 在以下位置建立獨立 worktree：
 
 ```text
-<workspace>/.orchestrator/worktrees/<owner-repo>-<issue-number>/
+<workspace>/.orchestrator/worktrees/<length-owner>_<length-repository>-issue-<issue-number>/（owner/repository 以長度編碼，避免同名碰撞）
 ```
 
 分支命名：
@@ -105,7 +106,7 @@ Core orchestrator 回傳 `ready_for_main` 之前，worker 不得 push。通過�
 2. 只對明確清單 stage / commit，不接受 `../` 或絕對路徑。
 3. 從 approved spec、`RunOutcome` 的 structured verification 與 post-commit Git metadata 建立 typed delivery payload；缺少、格式錯誤、測試失敗或 reviewer 非 pass 時在 push 前失敗。report、Pi events、agent output、prompts 與 ledger 不會進入 payload。
 4. Push worker 建立的 `codex/issue-*` branch。
-5. 建立 Draft PR，body 只渲染 Why、How（post-commit Git name/status 與 diff statistics）、approved scope、structured verification result 與 intentionally excluded；所有允許字串以 plain text escaped、逐欄及整體限制長度。它描述已 push 的交付狀態，不重複核心 report 的 pre-publication next step。Local report 與 ledger 只作 non-public traceability artifacts。
+5. 建立 Draft PR，body 只渲染累積 Attempt（每次原因、cycle 修法、findings、resume 決策、測試證據、變更檔案、成本/時間）、Why、How（post-commit Git name/status 與 diff statistics）、approved scope、structured verification result 與 intentionally excluded；所有允許字串以 plain text escaped、逐欄及整體限制長度。它描述已 push 的交付狀態，不重複核心 report 的 pre-publication next step。Local report 與 ledger 只作 non-public traceability artifacts。
 6. 將 Issue 轉為 `dev-flow-pr-ready`。
 
 它不會將 PR 轉 ready、merge PR 或 deploy。
@@ -115,13 +116,13 @@ PR delivery boundary：PR renderer 沒有 arbitrary report、raw event、agent s
 ## Failure semantics
 
 - Spec validation failure：不執行 agent，Issue 轉 needs-human；若是 `needs_spec`，先澄清 spec，不需要 checkpoint。
-- 乾淨 baseline 的 preflight 失敗：不執行 agent，先修正環境或既有程式碼，不需要 checkpoint。
+- 乾淨 baseline 的 preflight 失敗：初次執行不執行 agent；resume 只可容忍 retained product-test failure，missing command 或其他 environment failure 仍不執行 agent。
 - Orchestrator 非 `ready_for_main`：不 push，Issue 轉 needs-human。只有在實作或 review 已產生要保留的變更、且需要人工修正時，才走下述 checkpoint bridge。
 - Push 前 runtime failure：不會有遠端 publication。
 - Push 後 PR/writeback failure：嘗試刪除 remote branch；刪除失敗時將錯誤寫入 ledger 並明確回報 needs-human。
 - 所有 Issue writeback failure 都以非零結束，不靜默假裝成功。
 
-對於已保留實作或 review 變更的 needs-human report，人工 recovery 是：確認保留的 worktree provenance、建立 local checkpoint commit、由人選擇 narrow fix，再做 targeted follow-up review；不會自動 commit、push、restart 或 discard。這個手動 checkpoint bridge 不等同於未來 automated Same-Issue Resume（#10）。
+對於已保留實作或 review 變更的 needs-human report，recovery 必須確認 retained worktree provenance，並由具 repository 寫入權限的協作者新增 `dev-flow-resume` 與新的 `/dev-flow resume <decision>` comment；系統會在下一個 attempt 重用同一 worktree，不會自動 commit、push 或 discard。明確的 `rebuild` 只能在 retained path 缺失時恢復；既有或損壞的 worktree 若無法完成 provenance 驗證就 fail closed，`cancel` 不會呼叫 agent。
 
 Local job ledger 預設在：
 
@@ -200,7 +201,7 @@ rm ~/Library/LaunchAgents/tw.lifestay.dev-flow-worker.plist
 
 - Polling 有最多一個排程週期的延遲。
 - 單次 poll 只處理一個 Issue。
-- 同一 Issue 無法原地 rerun；需新 Issue。
+- 同一 Issue 可依 `dev-flow-resume`、新授權決策 comment 與 retained provenance 原地 resume；已有 Draft PR 的 Issue 不可再次 resume。
 - Worktree、claim ref 與 ledger 不自動 garbage collect。
 - Worker 沒有 HTTP API 或 dashboard；`dev-flow.lifestay.tw` 不參與觸發。
 - Worker 不 merge、不 deploy，不取代人類/ChatGPT PR review。

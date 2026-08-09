@@ -206,7 +206,7 @@ bin/dev-flow --max-tier 2
 
 - 若 report 帶有 `needs_spec` / `specGap`，先澄清產品語意、更新 spec，再重跑；不需要建立 checkpoint。
 - 若是乾淨 baseline 的 preflight 失敗，先修正環境或既有程式碼，再重跑；這也不是 checkpoint bridge 的情境。
-- 只有在實作或 review 已經產生要保留的變更、且需要人工修正時，才先確認保留 worktree 的 provenance，建立 local checkpoint commit，再由人選擇 narrow fix，最後做 targeted follow-up review。這是手動 checkpoint bridge；不會自動 commit、push、restart 或 discard，也不是未來 automated Resume（#10）。
+- 只有在實作或 review 已經產生要保留的變更、且需要人工修正時，才先確認保留 worktree 的 provenance，建立 local checkpoint commit，再由人選擇 narrow fix，最後做 targeted follow-up review。這是手動 checkpoint bridge；不會自動 commit、push、restart 或 discard；GitHub queue 另提供經 provenance、授權與 attempt claim 保護的 Same-Issue Resume。
 
 ### 9. 不自動 commit、push 或 merge
 
@@ -222,7 +222,7 @@ ready_for_main
 
 ### 10. 可選的 GitHub Issue queue
 
-需要把已核准需求交給 Mac 自動處理時，可使用 `bin/dev-flow-worker`。它每次 poll 最多 claim 一個、由人加上 `dev-flow-ready` label 的 open Issue：
+需要把已核准需求交給 Mac 自動處理時，可使用 `bin/dev-flow-worker`。它每次 poll 最多 claim 一個、由人加上 `dev-flow-ready` 的初次 Issue，或加上 `dev-flow-resume` 的原 Issue：
 
 ```text
 ChatGPT 讀取 repo
@@ -257,7 +257,7 @@ DEV_FLOW_FAKE_ISSUES=/path/to/issues.json bin/dev-flow-worker --dry-run
 
 `--dry-run` 不會呼叫 GitHub、建立 git worktree、commit、push 或建立 PR。Worker 範例每 300 秒 poll 一次，每次 poll 最多處理一個 Issue。排程可參考 [launchd 範例](deployment/dev-flow-worker.plist.example)；本專案不會自動安裝或載入它，請先檢查環境變數再手動啟用。
 
-Issue 的 label lifecycle 是 `dev-flow-ready` → `dev-flow-running` → `dev-flow-pr-ready` / `dev-flow-needs-human`。目前一個 Issue 只允許一次 GitHub-side claim；需重跑時建立新 Issue。worktree 與 job ledger 會保留供診斷，不會自動清理。完整的 contract、失敗語意、部署與操作限制見 [GitHub Issue queue 模組文件](docs/modules/github-issue-queue.md)。
+Issue 的 label lifecycle 是 `dev-flow-ready` → `dev-flow-running` → `dev-flow-pr-ready` / `dev-flow-needs-human`；人工恢復另需 `dev-flow-resume` 與授權協作者的新 `/dev-flow resume <decision>` comment。Claim identity 綁定 repository、Issue number 與 attempt，前一 attempt 完成不阻擋下一 attempt；resume 只重用 provenance 驗證的 retained worktree；只有明確 `rebuild` 才可在 retained path 缺失時恢復，既有 worktree 不會跳過 provenance 驗證或靜默重建。成功後只建立連回原 Issue 的 Draft PR，ready_for_main／PR 後不可 resume。完整限制見 [GitHub Issue queue 模組文件](docs/modules/github-issue-queue.md)。
 
 ## 有對外 API 嗎？
 

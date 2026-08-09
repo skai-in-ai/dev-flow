@@ -145,6 +145,37 @@ test("stores the ledger exclusion through git's worktree-aware path", async () =
   assert.equal(repeated.split("\n").filter((line) => line === ".orchestrator/").length, 1);
 });
 
+test("a retained resume still stops before agents when a command is unavailable", async () => {
+  const path = await repo();
+  class MissingCommand implements CommandRunner { async run(command: string): Promise<TestResult> { return { command, passed: false, output: "Failed to spawn: missing binary", exitCode: null }; } }
+  const agents = new FakeAgents([]);
+  const outcome = await new Orchestrator({ agents, tests: new MissingCommand() }).run(handoff(path), () => {}, { allowRetainedChanges: true, resume: { attempt: 2, decision: "narrow fix", decisionLog: "prior decision", findings: [], attemptedFixes: [], testEvidence: [] } });
+  assert.equal(outcome.status, "needs_human");
+  assert.equal(agents.calls.length, 0);
+  assert.match(outcome.error ?? "", /environment|broken before this task starts/);
+});
+
+test("a retained resume proceeds past a failing product preflight", async () => {
+  const path = await repo();
+  await writeFile(join(path, "a.ts"), "export const a = 2;\n");
+  class RetainedTests implements CommandRunner {
+    private calls = 0;
+    async run(command: string): Promise<TestResult> {
+      this.calls += 1;
+      const passed = this.calls !== 1;
+      return { command, passed, output: passed ? "ok" : "retained assertion failed", exitCode: passed ? 0 : 1 };
+    }
+  }
+  const agents = new FakeAgents([{ summary: "resume implementation" }, { summary: "VERDICT: pass", verdict: "pass" }]);
+  const outcome = await new Orchestrator({ agents, tests: new RetainedTests() }).run(handoff(path), () => {}, { allowRetainedChanges: true, resume: { attempt: 2, decision: "narrow fix", decisionLog: "prior decision", findings: ["retained finding"], attemptedFixes: ["prior fix"], testEvidence: [{ command: "true", passed: false }] } });
+  assert.equal(outcome.status, "ready_for_main");
+  assert.deepEqual(agents.calls.map((call) => call.role), ["implementer", "reviewer"]);
+  assert.match(agents.calls[0]?.artifacts.findings ?? "", /retained finding/);
+  assert.match(agents.calls[0]?.artifacts.attempted_fixes ?? "", /prior fix/);
+  assert.match(agents.calls[0]?.artifacts.test_evidence ?? "", /\"passed\":false/);
+  assert.match(agents.calls[1]?.artifacts.decision_log ?? "", /prior decision/);
+});
+
 test("an untracked approved spec neither blocks preflight nor enters review diff", async () => {
   const path = await repo();
   await mkdir(join(path, ".agent/specs"), { recursive: true });

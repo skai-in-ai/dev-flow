@@ -32,11 +32,11 @@ READY_FOR_MAIN · Tier <n> · <cycle>/<maxCycles> cycles
 - Reviewer 沒有 write/edit/bash tools。
 - `ready_for_main` 只表示檢查通過；不代表已 commit 或部署。
 
-## 人工 checkpoint bridge
+## 人工 checkpoint bridge / Same-Issue Resume
 
-當實作或 review 已產生需要保留的變更，而流程以 `needs_human` 或 runtime `failed` 停止時，人必須先確認保留的 worktree provenance，再建立 local checkpoint commit；接著由人選擇 narrow fix，最後執行 targeted follow-up review。這是手動的安全橋接，不是流程自動恢復：系統不會自動 commit、push、restart 或 discard。
+當實作或 review 已產生需要保留的變更，而流程以 `needs_human` 或 runtime `failed` 停止時，人必須先確認保留的 worktree provenance，再建立 local checkpoint commit；接著由人選擇 narrow fix，最後執行 targeted follow-up review。這是手動的安全橋接；queue 的 Same-Issue Resume 不會自動 commit、push 或 discard，必須驗證 repository、Issue、attempt、授權 comment 與 retained provenance；明確 `rebuild` 僅能在 retained path 缺失時重建，既有 worktree 即使 origin 與 branch 正確也不能跳過 provenance 驗證。
 
-`needs_spec`/`specGap` 應先澄清產品語意；乾淨 baseline 的 preflight 失敗應先修正環境或既有程式碼，兩者都不應建立 checkpoint。上述手動橋接也不同於未來 automated Resume（#10）；#10 的 provenance、授權與 resume 行為仍未實作。
+`needs_spec`/`specGap` 應先澄清產品語意；乾淨 baseline 的 preflight 失敗應先修正環境或既有程式碼，兩者都不應建立 checkpoint。Queue Same-Issue Resume 只接受具 repository 寫入權限協作者在上一 attempt 結束後新增的明確決策，並重用驗證過的 retained provenance；明確的 rebuild 只能在 retained path 缺失時恢復，既有或損壞的 worktree 若無法完成 provenance 驗證就 fail closed，cancel 則不呼叫 agent。
 
 ## 信任邊界
 
@@ -44,7 +44,7 @@ READY_FOR_MAIN · Tier <n> · <cycle>/<maxCycles> cycles
 - GitHub Issue body/title/labels/repository are untrusted input. The approved spec parser rejects missing sections, unresolved items, and prose tests; raw tests still execute with `shell: true`, so `dev-flow-ready` is approval but not a sandbox.
 - Queue repository selection is code-enforced by the owner/repository allowlist, a `DEV_FLOW_WORKSPACE_ROOT` constrained to `/Users/skai.wu/side` or a descendant, realpath workspace-root containment, existing Git checkout check, and an `origin` URL matching the allowlisted owner/repository. Worktree and branch names are derived from issue number/title after normalization; the primary working tree is not cleaned or reset. The claimed default branch/ref and SHA are validated and passed as `git` argv values; fetch failure or SHA mismatch blocks agent invocation.
 - Queue publication is code-gated on `ready_for_main` and successful deterministic tests/reviews. The branch is committed, then the Draft PR renderer accepts only a typed delivery payload containing approved spec fields, post-commit Git file/status and diff statistics, and structured outcome evidence; malformed or oversized delivery evidence is rendered and rejected before push. Raw report, Pi events, agent text, prompts and ledger content cannot reach the body; missing/malformed/unsuccessful evidence blocks publication. Allowed strings are escaped as plain text, URL autolinking is neutralized, and fields/lists/body are capped. Non-success before publication does not push. If PR creation or Issue writeback fails after push, the worker attempts to delete its remote branch; a failed cleanup is surfaced as `needs_human` and retained in the local queue ledger. Merge and deployment are not implemented.
-- GitHub claim refs make one Issue one-shot in the current MVP. Re-running requires a new Issue; retained worktrees and queue ledgers require periodic human cleanup after diagnosis.
+- GitHub claim refs are attempt-based: one worker per Issue/attempt, with `dev-flow-resume` and a fresh authorized `/dev-flow resume <decision>` comment required for later attempts. Retained worktrees and queue ledgers require periodic human cleanup; missing or corrupt provenance fails closed.
 - Spec tool 會拒絕明顯的自然語言測試敘述，但不等同 shell sandbox；approved spec 仍是受信任輸入。
 - Implementer 有 bash 與寫檔能力；Pi 層的 tool allowlist 限制工具種類，但不是容器或 OS sandbox。
 - `scope.include/exclude` 目前是 routing/review contract，沒有 deterministic path enforcement。
