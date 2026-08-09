@@ -6,7 +6,7 @@ import { promisify } from "node:util";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { acquirePollLock, draftPullRequestBody, MAX_DRAFT_PR_BODY_BYTES, orderQueue, parseIssueSpec, publicationFiles, queueConfig, worktree, type QueueIssue } from "../github-queue.js";
+import { acquirePollLock, claimRef, draftPullRequestBody, MAX_DRAFT_PR_BODY_BYTES, nextAttempt, orderQueue, parseIssueSpec, parseResumeDecision, pendingResume, publicationFiles, queueConfig, renderNeedsHumanReport, validateRetainedWorktree, worktree, worktreePath, type GitHubAdapter, type QueueClaim, type QueueComment, type QueueIssue } from "../github-queue.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -61,6 +61,42 @@ test("queue parser carries the optional invariants and non-goals section", () =>
   assert.deepEqual(parsed.spec.invariantsAndNonGoals, ["Preserve existing login behavior", "Do not change the public API"]);
 });
 
+test("attempt claim refs stay one-per-attempt and reject invalid attempt numbers", () => {
+  assert.equal(nextAttempt(undefined), 1);
+  assert.equal(nextAttempt(1), 2);
+  // The ref is created inside the Issue's own repository, so the repository is not part of it;
+  // the attempt is, or a finished attempt would block every later resume.
+  assert.equal(claimRef(issue(valid), 1), "refs/dev-flow-claims/issue-12-attempt-1");
+  assert.notEqual(claimRef(issue(valid), 1), claimRef(issue(valid), 2));
+  assert.throws(() => claimRef(issue(valid), 0), /positive integer/);
+  assert.throws(() => claimRef(issue(valid), 1.5), /positive integer/);
+});
+
+test("resume decisions accept only an authorized, fresh, non-empty narrow fix", () => {
+  const comment: QueueComment = { id: 7, author: "maintainer", body: "/dev-flow resume narrow fix the failing verification", createdAt: new Date().toISOString() };
+  assert.equal(parseResumeDecision(comment, 1), "narrow fix the failing verification");
+  assert.equal(parseResumeDecision({ ...comment, body: " /dev-flow resume " }, 1), undefined);
+  assert.equal(parseResumeDecision({ ...comment, body: "/dev-flow resume narrow fix" }, 1), undefined, "a narrow fix with no instruction is not a decision");
+  // rebuild and cancel are deliberately outside the MVP: no automated path may discard a worktree.
+  assert.equal(parseResumeDecision({ ...comment, body: "/dev-flow resume rebuild" }, 1), undefined);
+  assert.equal(parseResumeDecision({ ...comment, body: "/dev-flow resume cancel" }, 1), undefined);
+  assert.equal(parseResumeDecision({ ...comment, body: "/dev-flow resume please decide" }, 1), undefined);
+  assert.equal(parseResumeDecision({ ...comment, createdAt: "stale" }, 1), undefined);
+  assert.equal(parseResumeDecision(comment, 1, new Date(Date.now() + 1_000).toISOString()), undefined, "a comment older than the attempt report is stale");
+  assert.equal(parseResumeDecision(comment, 1, new Date(Date.now() - 1_000).toISOString()), "narrow fix the failing verification");
+});
+
+test("needs-human report carries the retained evidence and only offers resume when resumable", () => {
+  const base = { issueNumber: 12, attempt: 2, reason: "identical failure repeated in cycle 3 and 4", findings: ["仍失敗"], attemptedFixes: ["補上驗證"], changedFiles: ["src/a.ts"], failedVerification: ["npm test"], costUsd: 0.12, durationMs: 1234, worktree: "/tmp/tree", branch: "codex/issue-12-task" };
+  const report = renderNeedsHumanReport({ ...base, resumable: true });
+  assert.match(report, /identical failure repeated in cycle 3 and 4/); assert.match(report, /Attempt 2/); assert.match(report, /補上驗證/); assert.match(report, /變更檔案/); assert.match(report, /失敗驗證/);
+  assert.match(report, /dev-flow-resume/); assert.match(report, /\/dev-flow resume narrow fix/); assert.match(report, /人工決策/);
+  assert.match(report, /<!-- dev-flow-needs-human-attempt:2 -->/, "the attempt marker is how the next resume finds this report");
+  const published = renderNeedsHumanReport({ ...base, resumable: false });
+  assert.ok(!published.includes("/dev-flow resume narrow fix"), "a published attempt must not advertise resume");
+  assert.match(published, /無法由系統 resume/);
+});
+
 test("queue order is FIFO across repositories, not by per-repository issue number", () => {
   const queued = (repository: string, number: number, createdAt?: string): QueueIssue => ({ number, title: "t", body: "b", labels: ["dev-flow-ready"], repository, createdAt });
   const ordered = orderQueue([
@@ -85,6 +121,81 @@ test("queue order is FIFO across repositories, not by per-repository issue numbe
   assert.deepEqual(missing, [7, 5, 6], "issues without a usable timestamp sort last instead of jumping the queue");
 
   assert.deepEqual(orderQueue([]), [], "an empty queue stays empty");
+
+  // A resume-labelled Issue takes the same place in line as any other queued Issue.
+  const withResume = orderQueue([
+    { ...queued("owner/a", 9, "2026-08-09T00:00:00Z"), labels: ["dev-flow-resume"] },
+    queued("owner/a", 4, "2026-08-01T00:00:00Z"),
+  ]).map((issue) => issue.number);
+  assert.deepEqual(withResume, [4, 9]);
+});
+
+class FakeAdapter implements GitHubAdapter {
+  readonly comments: QueueComment[] = [];
+  readonly posted: string[] = [];
+  readonly labelsAdded: string[] = [];
+  readonly labelsRemoved: string[] = [];
+  readonly claims: number[] = [];
+  constructor(private readonly issues: QueueIssue[], private readonly writers: readonly string[] = ["maintainer"]) {}
+  async listReadyIssues(): Promise<QueueIssue[]> { return this.issues; }
+  async listComments(): Promise<QueueComment[]> { return this.comments; }
+  async isAuthorized(_issue: QueueIssue, author: string): Promise<boolean> { return this.writers.includes(author); }
+  async claim(_issue: QueueIssue, attempt = 1): Promise<QueueClaim | false> { this.claims.push(attempt); return { defaultBranch: "main", sha: "a".repeat(40), attempt }; }
+  async removeLabel(_issue: QueueIssue, label: string): Promise<void> { this.labelsRemoved.push(label); }
+  async addLabel(_issue: QueueIssue, label: string): Promise<void> { this.labelsAdded.push(label); }
+  async comment(_issue: QueueIssue, body: string): Promise<void> { this.posted.push(body); }
+  async createDraftPullRequest(): Promise<{ url: string }> { throw new Error("not reachable in these tests"); }
+}
+
+const resumeIssue = (): QueueIssue => ({ ...issue(valid), labels: ["dev-flow-resume", "dev-flow-needs-human"], createdAt: "2026-08-01T00:00:00Z" });
+const report = (attempt: number, at: string): QueueComment => ({ id: 1, author: "worker", body: renderNeedsHumanReport({ issueNumber: 12, attempt, reason: "reviewer 未通過", findings: ["f"], attemptedFixes: ["a"], changedFiles: ["src/a.ts"], failedVerification: [], worktree: "/tmp/tree", branch: "codex/issue-12-safe-task", resumable: true }), createdAt: at });
+
+test("a resume Issue is not actionable until an authorized, fresh decision exists", async () => {
+  const target = resumeIssue();
+  const adapter = new FakeAdapter([target]);
+
+  // Waiting on the human: the needs-human report is posted, nothing has answered it yet.
+  adapter.comments.push(report(1, "2026-08-02T00:00:00Z"));
+  assert.equal(await pendingResume(adapter, target), undefined, "an unanswered report must not be actionable");
+
+  // A decision that predates the report is stale, not an instruction for this attempt.
+  adapter.comments.push({ id: 2, author: "maintainer", body: "/dev-flow resume narrow fix old", createdAt: "2026-08-01T12:00:00Z" });
+  assert.equal(await pendingResume(adapter, target), undefined, "a decision older than the latest report is stale");
+
+  // Anyone can comment on a public Issue; only repository writers can drive the worker.
+  adapter.comments.push({ id: 3, author: "stranger", body: "/dev-flow resume narrow fix untrusted", createdAt: "2026-08-03T00:00:00Z" });
+  assert.equal(await pendingResume(adapter, target), undefined, "an unauthorized author must not be able to resume");
+
+  adapter.comments.push({ id: 4, author: "maintainer", body: "/dev-flow resume narrow fix 修正授權判斷", createdAt: "2026-08-04T00:00:00Z" });
+  assert.deepEqual(await pendingResume(adapter, target), { previousAttempt: 1, decision: "narrow fix 修正授權判斷", author: "maintainer" });
+
+  // Publication is terminal: a Draft PR comment closes the Issue to further resumes.
+  adapter.comments.push({ id: 5, author: "worker", body: "Draft PR 已建立：https://github.com/owner/repo/pull/7", createdAt: "2026-08-05T00:00:00Z" });
+  assert.equal(await pendingResume(adapter, target), undefined, "an Issue with a published PR must not resume");
+});
+
+test("a resume Issue waiting on its human is skipped, and never written to", async () => {
+  const waiting = resumeIssue();
+  const adapter = new FakeAdapter([waiting]);
+  adapter.comments.push(report(1, "2026-08-02T00:00:00Z"));
+  assert.equal(await pendingResume(adapter, waiting), undefined);
+  // Nothing above may touch the Issue: a report posted per poll would repost every interval and,
+  // being FIFO-first, would starve every other queued Issue behind it.
+  assert.deepEqual(adapter.posted, []);
+  assert.deepEqual(adapter.labelsAdded, []);
+  assert.deepEqual(adapter.labelsRemoved, []);
+  assert.deepEqual(adapter.claims, []);
+});
+
+test("an adapter without comment support can never resume", async () => {
+  const target = resumeIssue();
+  const bare: GitHubAdapter = {
+    listReadyIssues: async () => [target],
+    claim: async () => ({ defaultBranch: "main", sha: "a".repeat(40) }),
+    removeLabel: async () => {}, addLabel: async () => {}, comment: async () => {},
+    createDraftPullRequest: async () => ({ url: "https://github.com/owner/repo/pull/1" }),
+  };
+  assert.equal(await pendingResume(bare, target), undefined);
 });
 
 test("publication includes staged, unstaged, and untracked files without duplicates", () => {
@@ -103,15 +214,19 @@ test("draft PR renders only typed reason, Git, scope, and verification evidence"
     report: raw, events: raw, agentOutput: raw, ledger: raw,
   };
   const body = draftPullRequestBody(payload);
-  assert.match(body, /## Why/); assert.match(body, /## How/); assert.match(body, /M src\/a\\\.ts/); assert.match(body, /\\~\\~secret\\~\\~/); assert.match(body, /\\#shell/); assert.match(body, /2 insertions/);
+  assert.match(body, /## 為何/); assert.match(body, /## 如何完成/); assert.match(body, /M src\/a\\\.ts/); assert.match(body, /\\~\\~secret\\~\\~/); assert.match(body, /\\#shell/); assert.match(body, /新增 2 行/);
   assert.ok(!body.includes("RAW_REPORT")); assert.ok(!body.includes("prompt=secret")); assert.ok(!body.includes("/Users/skai.wu/side")); assert.ok(!body.includes("https://localhost")); assert.ok(body.includes("https&#58;//localhost"));
-  assert.match(body, /## Approved scope/); assert.match(body, /## Verification result/); assert.match(body, /PASS: npm test/); assert.match(body, /## Intentionally excluded/);
+  assert.match(body, /## 核准範圍/); assert.match(body, /## 驗證結果/); assert.match(body, /PASS: npm test/); assert.match(body, /## 刻意排除/);
+  assert.match(body, /## 執行歷程/); assert.match(body, /初次執行/);
+  const resumed = draftPullRequestBody({ ...payload, attempt: 2, resumeDecision: "narrow fix 修正測試" });
+  assert.match(resumed, /第 2 次 attempt/); assert.match(resumed, /narrow fix 修正測試/);
+  assert.throws(() => draftPullRequestBody({ ...payload, attempt: 0 }), /attempt/);
   const escalatedAtTierTwo = draftPullRequestBody({
     issueNumber: 12, objective: "Change behavior", backgroundAndDecisions: "Keep compatibility", risks: [], acceptanceCriteria: ["tests pass"],
     approvedInclude: ["src/a.ts"], approvedExclude: [], git: { files: [{ path: "src/a.ts", status: "M" }], filesChanged: 1, insertions: 2, deletions: 1 },
     tests: [{ command: "npm test", passed: true }], reviewerVerdict: "escalate", finalReviewerVerdict: "pass", status: "ready_for_main", tier: 2, cycles: 2, costUsd: 0.12, durationMs: 1234, runId: "run-2",
   });
-  assert.match(escalatedAtTierTwo, /Reviewer verdict: escalate/);
+  assert.match(escalatedAtTierTwo, /審查 verdict：escalate/);
 });
 
 test("draft PR rejects unsuccessful evidence and cannot accept arbitrary report text", () => {
@@ -150,6 +265,33 @@ test("queue configuration requires an explicit repository allowlist and defaults
   assert.throws(() => queueConfig({ DEV_FLOW_ALLOWED_REPOS: "owner/repo", DEV_FLOW_WORKSPACE_ROOT: "/tmp" }), /inside \/Users\/skai\.wu\/side/);
 });
 
+test("retained provenance is bound to the expected Issue worktree path, branch, HEAD and status", async () => {
+  const root = await mkdtemp("/tmp/dev-flow-retained-");
+  try {
+    const remote = join(root, "remote.git"); const repo = join(root, "repo");
+    await execFileAsync("git", ["init", "--bare", remote]); await execFileAsync("git", ["init", repo]);
+    await execFileAsync("git", ["config", "user.email", "test@example.invalid"], { cwd: repo }); await execFileAsync("git", ["config", "user.name", "Test"], { cwd: repo });
+    await writeFile(join(repo, "file.txt"), "x\n"); await execFileAsync("git", ["add", "file.txt"], { cwd: repo }); await execFileAsync("git", ["commit", "-m", "base"], { cwd: repo });
+    const sha = (await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: repo })).stdout.trim();
+    await execFileAsync("git", ["remote", "add", "origin", "https://github.com/owner/repo.git"], { cwd: repo });
+    const config = { allowedRepos: ["owner/repo"], workspaceRoot: root, ledgerRoot: join(root, "ledger"), maxTier: 1 as const, dryRun: false, workerId: "test" };
+    const expected = worktreePath(config, issue(valid)); await mkdirSync(join(root, ".orchestrator", "worktrees"), { recursive: true });
+    await execFileAsync("git", ["worktree", "add", "-b", "codex/issue-12-safe-task", expected, sha], { cwd: repo });
+    const provenance = { repository: "owner/repo", issueNumber: 12, branch: "codex/issue-12-safe-task", cwd: expected, baselineSha: sha, status: "", recordedAt: new Date().toISOString() };
+    await validateRetainedWorktree(provenance, issue(valid), expected, provenance.branch);
+    // A resume reuses the retained worktree as-is; it never fetches or re-creates it.
+    assert.deepEqual(await worktree(config, repo, issue(valid), { defaultBranch: "main", sha }, provenance), { cwd: expected, branch: "codex/issue-12-safe-task" });
+    await assert.rejects(() => validateRetainedWorktree({ ...provenance, cwd: repo }, issue(valid), expected, provenance.branch), /路徑/);
+    await assert.rejects(() => validateRetainedWorktree(provenance, issue(valid), expected, "codex/issue-12-other"), /branch 不符/);
+    await assert.rejects(() => validateRetainedWorktree({ ...provenance, baselineSha: "1".repeat(40) }, issue(valid), expected, provenance.branch), /HEAD 與 provenance 不符/);
+    await assert.rejects(() => validateRetainedWorktree({ ...provenance, repository: "other/repo" }, issue(valid), expected, provenance.branch), /provenance 內容不合法/);
+    await assert.rejects(() => validateRetainedWorktree({ ...provenance, previousOutcome: { status: "ready_for_main" } as never }, issue(valid), expected, provenance.branch), /ready_for_main/);
+    // Anything the previous attempt did not record is unexplained state; it must fail closed.
+    await writeFile(join(expected, "stray.txt"), "unexplained\n");
+    await assert.rejects(() => validateRetainedWorktree(provenance, issue(valid), expected, provenance.branch), /未記錄的變動/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("worktree fetches and starts at the claimed SHA rather than local HEAD", async () => {
   const root = await mkdtemp("/tmp/dev-flow-queue-");
   try {
@@ -164,7 +306,7 @@ test("worktree fetches and starts at the claimed SHA rather than local HEAD", as
     const tree = await worktree(config, repo, issue(valid), { defaultBranch: "main", sha: claimedSha });
     assert.notEqual(oldSha, claimedSha); assert.equal(await git(tree.cwd, ["rev-parse", "HEAD"]), claimedSha);
     assert.equal(await git(repo, ["rev-parse", "HEAD"]), oldSha);
-    await assert.rejects(() => worktree(config, repo, { ...issue(valid), number: 13 }, { defaultBranch: "main", sha: oldSha }), /does not match claimed SHA/);
+    await assert.rejects(() => worktree(config, repo, { ...issue(valid), number: 13 }, { defaultBranch: "main", sha: oldSha }), /與 claim 的 SHA 不符/);
     await assert.rejects(() => worktree(config, repo, { ...issue(valid), number: 14 }, { defaultBranch: "missing", sha: claimedSha }), /fetch|Could not resolve/);
   } finally { await rm(root, { recursive: true, force: true }); }
 });

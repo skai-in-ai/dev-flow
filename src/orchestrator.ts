@@ -27,7 +27,12 @@ export interface RunCost { total: number; byRole: Record<string, number> }
  * needs_clarification），所以執行當下的原文必須快照，否則事後無從得知這次到底
  * 是對著什麼規格跑的。
  */
-export interface RunSource { specPath?: string; specTitle?: string; specMarkdown?: string; maxTier?: Tier }
+export interface RunSource {
+  specPath?: string; specTitle?: string; specMarkdown?: string; maxTier?: Tier;
+  /** Queue resume is allowed only after the queue has verified retained provenance. */
+  resume?: { attempt: number; decision: string; decisionLog: string; findings: string[]; attemptedFixes: string[]; testEvidence: RunVerification["tests"] };
+  allowRetainedChanges?: boolean;
+}
 
 export function applyTierCap<T extends RoutingResult>(routing: T, maxTier: Tier | undefined): T {
   if (maxTier === undefined || routing.tier <= maxTier) return routing;
@@ -45,7 +50,7 @@ export class Orchestrator {
     const repo = resolve(handoff.repo); const runId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`;
     await excludeLedger(repo);
     const status = await git(repo, ["status", "--porcelain", "--untracked-files=all"]);
-    if (meaningfulStatus(status).length) throw new Error("Target repo working tree must be clean before orchestration");
+    if (meaningfulStatus(status).length && source.allowRetainedChanges !== true) throw new Error("Target repo working tree must be clean before orchestration");
     const root = join(repo, ".orchestrator", "runs", runId); await mkdir(root, { recursive: true });
     const baseline = await git(repo, ["rev-parse", "HEAD"]).catch(() => "unborn");
     const startedAt = this.deps.now?.() ?? new Date();
@@ -65,10 +70,11 @@ export class Orchestrator {
       verification = { ...verification, tests: preflight.map(({ command, passed }) => ({ command, passed })) };
       await ledger(root, "preflight-tests.json", preflight);
       const broken = preflight.filter((test) => !test.passed);
-      if (broken.length) {
+      const environmentFailure = broken.some((test) => test.exitCode === null || /failed to spawn|command not found|no such file or directory/i.test(test.output));
+      if (broken.length && (source.allowRetainedChanges !== true || environmentFailure)) {
         // baseline 是乾淨的 HEAD，此時測試就不過代表環境或既有程式碼有問題，
-        // 不是這次要做的事造成的。implementer 修不好「pytest 沒安裝」這種事，
-        // 實測有一個 run 因此連燒四個 cycle。在花任何模型錢之前就停。
+        // 不是這次要做的事造成的。resume 只容許保留的 product-test failure；
+        // 缺少命令或其他環境錯誤仍必須在任何 agent 前停止。
         const reason = `preflight failed on a clean tree; the environment or the existing code is broken before this task starts:\n${broken.map((test) => `${test.command}: ${test.output}`).join("\n")}`;
         onProgress("Preflight: deterministic tests fail on the untouched baseline; refusing to start.");
         return this.finish(root, "needs_human", runId, initialTierGuess(source), 0, maxCyclesFor(maxFixCyclesEarly), await hybridRoute(handoff, this.deps.config, undefined), { total: 0, byRole: {} }, startedAt, source, undefined, reason, EMPTY_DECISION_LOG, verification);
@@ -107,7 +113,7 @@ export class Orchestrator {
       onProgress(`Cycle ${cycle}/${maxCyclesFor(maxFixCycles)} · Tier ${effective.tier}`);
       if (implementationNeeded) {
         const implementerModel = modelFor(effective.tier, "implementer", cycle, source.maxTier);
-        const result = await this.deps.agents.run({ role: "implementer", taskId: runId, cwd: repo, sessionDir: join(root, `cycle-${cycle}-implementer`), model: implementerModel, timeoutMs: 25 * 60_000, prompt: `Implement this handoff:\n${JSON.stringify(handoff, null, 2)}${lastFindings.length ? `\nFix these findings:\n${lastFindings.join("\n")}` : ""}`, artifacts: { handoff: JSON.stringify(handoff, null, 2), baseline, findings: lastFindings.join("\n"), decision_log: formatDecisionLog(decisionLog) } });
+        const result = await this.deps.agents.run({ role: "implementer", taskId: runId, cwd: repo, sessionDir: join(root, `cycle-${cycle}-implementer`), model: implementerModel, timeoutMs: 25 * 60_000, prompt: `Implement this handoff:\n${JSON.stringify(handoff, null, 2)}${source.resume ? `\nResume attempt ${source.resume.attempt}; authorized decision: ${source.resume.decision}\nPrior attempted fixes:\n${source.resume.attemptedFixes.join("\n")}` : ""}${lastFindings.length ? `\nFix these findings:\n${lastFindings.join("\n")}` : ""}`, artifacts: { handoff: JSON.stringify(handoff, null, 2), baseline, findings: [...(source.resume?.findings ?? []), ...lastFindings].join("\n"), attempted_fixes: (source.resume?.attemptedFixes ?? []).join("\n"), test_evidence: JSON.stringify(source.resume?.testEvidence ?? []), decision_log: [source.resume?.decisionLog, formatDecisionLog(decisionLog)].filter(Boolean).join("\n\n") } });
         await ledger(root, `cycle-${cycle}-implementer.json`, result); charge("implementer", costOf(result.usage)); onProgress(`Implementer: ${result.summary.slice(0, 160)}`);
         if (cycle > 1) { decisionLog = appendResponse(decisionLog, { round: cycle - 1, model: implementerModel.model, text: result.summary }); await ledger(root, "decisions.json", decisionLog); }
         if (await git(repo, ["rev-parse", "HEAD"]).then((head) => head.trim()) !== baseline.trim()) throw new Error("Implementer changed HEAD; commit/push is forbidden");
@@ -125,7 +131,7 @@ export class Orchestrator {
       if (testCommands.length === 0) onProgress("Tests: no deterministic commands configured; reviewers will receive this explicitly.");
       const testResults = await runTests(this.deps.tests, testCommands, repo); verification = { ...verification, tests: testResults.map(({ command, passed }) => ({ command, passed })) }; await ledger(root, `cycle-${cycle}-tests.json`, testResults);
       if (testResults.some((test) => !test.passed)) { lastFindings = testResults.filter((test) => !test.passed).map((test) => `${test.command}: ${test.output}`); await record("tests", "deterministic", lastFindings); if (!advance()) return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source, undefined, stallReason, decisionLog, verification); continue; }
-      const artifacts = { handoff: JSON.stringify(handoff, null, 2), diff, tests: formatTests(testResults), repo_rules: await repoRules(repo), decision_log: formatDecisionLog(decisionLog) };
+      const artifacts = { handoff: JSON.stringify(handoff, null, 2), diff, tests: formatTests(testResults), repo_rules: await repoRules(repo), decision_log: [source.resume?.decisionLog, formatDecisionLog(decisionLog)].filter(Boolean).join("\n\n"), resume_decision: source.resume?.decision ?? "", prior_findings: (source.resume?.findings ?? []).join("\n"), attempted_fixes: (source.resume?.attemptedFixes ?? []).join("\n"), prior_test_evidence: JSON.stringify(source.resume?.testEvidence ?? []) };
       const reviewerModel = modelFor(effective.tier, "reviewer");
       const review = await this.deps.agents.run({ role: "reviewer", taskId: runId, cwd: repo, sessionDir: join(root, `cycle-${cycle}-reviewer`), model: reviewerModel, prompt: "Review the supplied final diff against the handoff. You are read-only.", artifacts });
       await ledger(root, `cycle-${cycle}-reviewer.json`, review); charge("reviewer", costOf(review.usage));

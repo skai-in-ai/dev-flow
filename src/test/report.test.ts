@@ -94,7 +94,8 @@ test("needs-human guidance uses a manual checkpoint bridge", () => {
   assert.match(report, /human.*narrow fix|narrow fix/);
   assert.match(report, /targeted follow-up review/);
   assert.match(report, /does not auto|不會自動 commit、push、restart 或 discard/);
-  assert.match(report, /Resume.*#10/);
+  assert.match(report, /Same-Issue Resume/);
+  assert.ok(!report.includes("#10"), "the core report must not advertise an unshipped issue number");
 });
 
 test("repeated failures with an error still use checkpoint guidance", () => {

@@ -74,12 +74,13 @@ sequenceDiagram
 
 ```text
 ChatGPT/repo → approved Issue → human dev-flow-ready → one Mac poll
-  → atomic GitHub claim ref (validated default branch + SHA) → ready→running label transition → fetch/verify remote base → allowlisted checkout/worktree
+  → atomic Issue/attempt claim ref (validated default branch + SHA) → ready/resume→running label transition → fetch/verify remote base or validate retained provenance → allowlisted checkout/worktree
+  → needs_human Traditional-Chinese report → authorized dev-flow-resume + fresh /dev-flow resume narrow fix decision → next attempt on the same retained worktree
   → existing Luna-first orchestrator → ready_for_main + tests/reviews
   → codex branch → commit/push → Draft PR → human/ChatGPT review
 ```
 
-`GhCliAdapter` uses `gh` argv and structured JSON for reads; Issue text is passed as an argv value, never interpolated into a shell command. The worker records a local queue ledger before external work. Non-success outcomes before publication do not push. If an error happens after push, the worker attempts to delete the remote branch; cleanup failure is recorded and returned as `needs_human` rather than being hidden. No merge or deployment is performed. Full lifecycle: `docs/modules/github-issue-queue.md`.
+`GhCliAdapter` uses `gh` argv and structured JSON for reads; Issue text is passed as an argv value, never interpolated into a shell command. Resume comments require repository write permission and explicit `narrow fix` syntax; a stale, ambiguous, or unauthorized comment fails closed, as does missing or corrupt provenance. The worker records a local queue ledger before external work, and renders only the current attempt number and its authorized decision into the Draft PR. A retained worktree is always provenance-validated, and is never reused merely because its origin and branch look correct. There is no automated rebuild, cancel, or recovery: those stay with the human. Non-success outcomes before publication do not push. If an error happens after push, the worker attempts to delete the remote branch; cleanup failure is recorded and returned as `needs_human` rather than being hidden. No merge or deployment is performed. Full lifecycle: `docs/modules/github-issue-queue.md`.
 
 ## Ledger
 
