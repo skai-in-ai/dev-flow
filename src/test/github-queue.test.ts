@@ -58,7 +58,12 @@ test("draft PR rejects malformed numeric evidence and oversized Git/test lists",
   assert.throws(() => draftPullRequestBody({ ...payload, git: { ...payload.git, deletions: Number.POSITIVE_INFINITY } }), /Git delivery/);
   assert.throws(() => draftPullRequestBody({ ...payload, git: { ...payload.git, insertions: 1.5 } }), /Git delivery/);
   assert.throws(() => draftPullRequestBody({ ...payload, git: { ...payload.git, deletions: 1.5 } }), /Git delivery/);
+  assert.throws(() => draftPullRequestBody({ ...payload, git: { ...payload.git, filesChanged: Number.MAX_VALUE } }), /Git delivery/);
+  assert.throws(() => draftPullRequestBody({ ...payload, git: { ...payload.git, insertions: Number.MAX_SAFE_INTEGER + 1 } }), /Git delivery/);
+  assert.throws(() => draftPullRequestBody({ ...payload, git: { ...payload.git, deletions: Number.MAX_SAFE_INTEGER + 1 } }), /Git delivery/);
   assert.throws(() => draftPullRequestBody({ ...payload, reviewerVerdict: "escalate" }), /incomplete delivery evidence/);
+  assert.throws(() => draftPullRequestBody({ ...payload, finalReviewerVerdict: "pass" }), /incomplete delivery evidence/);
+  assert.throws(() => draftPullRequestBody({ ...payload, tier: 0, finalReviewerVerdict: "pass" }), /incomplete delivery evidence/);
   assert.throws(() => draftPullRequestBody({ ...payload, tier: 3 }), /malformed delivery result/);
   assert.throws(() => draftPullRequestBody({ ...payload, cycles: -1 }), /malformed delivery result/);
   assert.throws(() => draftPullRequestBody({ ...payload, git: { files: Array.from({ length: 101 }, (_, index) => ({ path: `a-${index}`, status: "M" })), filesChanged: 101, insertions: 0, deletions: 0 } }), /Git delivery/);
