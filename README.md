@@ -249,7 +249,7 @@ export DEV_FLOW_QUEUE_LEDGER=/path/to/ledger        # 選用
 
 allowlist 對應的 checkout 必須已存在於 workspace root 下、是 Git worktree，且 `origin` 必須與 `OWNER/REPOSITORY` 完全一致；同名但不同 owner 的 checkout 會被拒絕。worker 使用本機 atomic poll lock 避免同一台 Mac 重複 claim，並以 GitHub ref 的 atomic creation 防止跨 Mac 重複處理。`gh` 必須能讀寫 Issue、push branch、建立 pull request；先用 `gh auth status` 確認登入。
 
-Issue body 必須遵循 [approved template](examples/github-issue-template.md)：`status: approved`、`max_tier`、全部必填區段、可直接執行的 raw tests，以及空白的 `Unresolved items` 都是必要條件；`Invariants and non-goals` 可省略，普通任務填 `none`。可先用以下方式做無副作用驗證：
+GitHub New Issue 提供桌面與 mobile web 都可使用的 **Dev-flow task** template（見 `.github/ISSUE_TEMPLATE/dev-flow.md`），並保留一般 blank Issues。它先建立 `status: draft` 的 draft；填完 [approved template](examples/github-issue-template.md) 的全部必填區段後，改為 `status: approved`，確認 raw、trusted shell tests 與 `Unresolved items: none`，再由人加入 `dev-flow-ready`。建立或編輯 Issue 不是 approval；ready label 才是明確核准，template 不會自動加 label，未完成內容不會啟動 agent。`max_tier` 必須存在；`Invariants and non-goals` 可省略，普通任務填 `none`。可先用以下方式做無副作用驗證：
 
 ```bash
 DEV_FLOW_FAKE_ISSUES=/path/to/issues.json bin/dev-flow-worker --dry-run

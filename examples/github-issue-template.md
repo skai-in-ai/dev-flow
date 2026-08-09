@@ -3,6 +3,8 @@ status: approved
 max_tier: 1
 ---
 
+<!-- These are raw, trusted shell commands executed verbatim by the worker. Review them before approval. -->
+
 # Short task title
 
 ## Objective
@@ -31,5 +33,3 @@ none
 
 ## Unresolved items
 none
-
-<!-- ChatGPT reads the repository, creates this Issue, and discusses missing details. A human must add dev-flow-ready; that label is approval, not a sandbox. -->

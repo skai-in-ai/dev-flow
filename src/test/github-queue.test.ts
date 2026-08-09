@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import test from "node:test";
 import { draftPullRequestBody, MAX_DRAFT_PR_BODY_BYTES, parseIssueSpec, publicationFiles, queueConfig, type QueueIssue } from "../github-queue.js";
 
@@ -14,6 +16,30 @@ test("queue parser requires approved, complete specs and never uses an issue rep
   assert.throws(() => parseIssueSpec(issue(valid.replace("none", "- decide later"))), /unresolved/);
   assert.throws(() => parseIssueSpec(issue(valid.replace("none", "Decide API behavior"))), /only bullets/);
   assert.throws(() => parseIssueSpec(issue(valid.replace("- npm test", "- run the tests"))), /raw executable/);
+  assert.throws(() => parseIssueSpec(issue(valid.replace("Change the behavior.\nMore detail.", ""))), /Objective/);
+  assert.throws(() => parseIssueSpec(issue(valid.replace("Keep compatibility.", ""))), /Background and decisions/);
+});
+
+test("installed GitHub template and example preserve the queue contract", () => {
+  const template = readFileSync(join(process.cwd(), ".github/ISSUE_TEMPLATE/dev-flow.md"), "utf8");
+  const example = readFileSync(join(process.cwd(), "examples/github-issue-template.md"), "utf8");
+  const requiredHeadings = ["Objective", "Background and decisions", "Scope include", "Scope exclude", "Acceptance criteria", "Tests", "Risks", "Unresolved items"];
+  assert.match(template, /^---\nname: Dev-flow task/m);
+  assert.match(template, /^labels: \"\"$/m);
+  assert.match(template, /^---\nstatus: draft\nmax_tier: 1\n---$/m);
+  assert.match(readFileSync(join(process.cwd(), ".github/ISSUE_TEMPLATE/config.yml"), "utf8"), /blank_issues_enabled: true/);
+  for (const heading of requiredHeadings) {
+    assert.match(template, new RegExp(`^## ${heading}$`, "m"));
+    assert.match(example, new RegExp(`^## ${heading}$`, "m"));
+  }
+  const parsedExample = parseIssueSpec(issue(example));
+  assert.equal(parsedExample.spec.status, "approved");
+  assert.equal(parsedExample.maxTier, 1);
+  const body = template.replace(/^---[\s\S]*?---\n/, "");
+  assert.match(body, /^---\nstatus: draft\nmax_tier: 1\n---\n/);
+  assert.throws(() => parseIssueSpec(issue(body)), /status must be approved/);
+  const approvedTemplate = body.replace("status: draft", "status: approved").replace(/(## Unresolved items\n)[\s\S]*$/, "$1none\n");
+  assert.throws(() => parseIssueSpec(issue(approvedTemplate)), /incomplete template placeholders/);
 });
 
 test("queue parser carries the optional invariants and non-goals section", () => {
