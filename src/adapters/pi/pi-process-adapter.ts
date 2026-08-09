@@ -116,8 +116,10 @@ export function renderPrompt(request: AgentRunRequest, budget: PromptBudget = DE
 export function reviewerInstruction(): string {
   return [
     "Do not edit files. You may list concise findings, then end with exactly one standalone line: VERDICT: pass, VERDICT: fail, VERDICT: escalate, or VERDICT: needs_spec.",
+    "Use the handoff's declared invariantsAndNonGoals as a boundary: respect explicit non-goals and preserve declared invariants.",
+    "Batch same-category sibling findings in one review round, but check only reasonable, reachable approved paths; do not require every theoretical sibling case.",
     "Use VERDICT: needs_spec only when the correct behavior is undefined in the handoff, such that any implementation choice could be wrong. It is not a substitute for fail.",
-    "When you answer needs_spec, your findings must contain at least three entries: the first states exactly which semantic is undefined, and the rest are concrete candidate answers for what it should do (at least two).",
+    "When you answer needs_spec, your findings must contain at least three entries: the first states exactly which semantic is undefined, and the rest are concrete candidate answers for what it should do (at least two)."
   ].join(" ");
 }
 /**
@@ -132,6 +134,8 @@ export function implementerInstruction(): string {
   return [
     "Implement the task, run only safe local checks, and summarize changed files.",
     "Do only what the handoff and the listed findings require. Do not refactor, do not reformat, and do not touch files unrelated to the requested change.",
+    "Read the handoff's invariantsAndNonGoals before changing behavior; respect explicit non-goals and preserve declared invariants.",
+    "When addressing a finding, inspect reasonable sibling cases in the same reachable invariant category and add regression tests for the relevant cases; do not attempt every theoretical sibling.",
     "If the decision_log artifact contains prior rounds: this is an incremental fix, not a rewrite. Do not rewrite the existing implementation. Respond to every prior finding explicitly, stating either what you changed to address it or why you intentionally left it unchanged.",
   ].join(" ");
 }

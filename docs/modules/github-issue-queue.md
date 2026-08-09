@@ -33,13 +33,14 @@ Issue body 必須使用 `examples/github-issue-template.md`，並包含：
 - `max_tier: 0 | 1 | 2`
 - Objective
 - Background and decisions
+- optional Invariants and non-goals (use `none` for ordinary tasks)
 - Scope include / exclude
 - Acceptance criteria
 - raw executable Tests
 - Risks
 - Unresolved items
 
-`Unresolved items` 必須是 `none`，或等價的空值表示；任何待答內容都會阻擋執行。測試命令會以 shell 執行，因此加 label 前必須像 review code 一樣 review spec。
+`Invariants and non-goals` 可省略以相容 legacy Issues；若存在則只描述合理、可到達的 invariant 類別與明確不做的範圍，不要求涵蓋每個理論 sibling。`Unresolved items` 必須是 `none`，或等價的空值表示；任何待答內容都會阻擋執行。測試命令會以 shell 執行，因此加 label 前必須像 review code 一樣 review spec。
 
 ## Label lifecycle
 
@@ -102,11 +103,14 @@ PR delivery boundary：PR renderer 沒有 arbitrary report、raw event、agent s
 
 ## Failure semantics
 
-- Spec/repo validation failure：不執行 agent，Issue 轉 needs-human。
-- Orchestrator 非 `ready_for_main`：不 push，Issue 轉 needs-human。
+- Spec validation failure：不執行 agent，Issue 轉 needs-human；若是 `needs_spec`，先澄清 spec，不需要 checkpoint。
+- 乾淨 baseline 的 preflight 失敗：不執行 agent，先修正環境或既有程式碼，不需要 checkpoint。
+- Orchestrator 非 `ready_for_main`：不 push，Issue 轉 needs-human。只有在實作或 review 已產生要保留的變更、且需要人工修正時，才走下述 checkpoint bridge。
 - Push 前 runtime failure：不會有遠端 publication。
 - Push 後 PR/writeback failure：嘗試刪除 remote branch；刪除失敗時將錯誤寫入 ledger 並明確回報 needs-human。
 - 所有 Issue writeback failure 都以非零結束，不靜默假裝成功。
+
+對於已保留實作或 review 變更的 needs-human report，人工 recovery 是：確認保留的 worktree provenance、建立 local checkpoint commit、由人選擇 narrow fix，再做 targeted follow-up review；不會自動 commit、push、restart 或 discard。這個手動 checkpoint bridge 不等同於未來 automated Same-Issue Resume（#10）。
 
 Local job ledger 預設在：
 

@@ -12,6 +12,8 @@ export interface TaskSpec {
   createdAt: string;
   objective: string;
   backgroundAndDecisions: string;
+  /** Optional compatibility boundary; omitted by legacy saved specs. */
+  invariantsAndNonGoals?: string[];
   modificationScope: string[];
   excludedScope: string[];
   acceptanceCriteria: string[];
@@ -23,6 +25,7 @@ export interface TaskSpec {
 const sections = {
   objective: "目標",
   backgroundAndDecisions: "背景與決策",
+  invariantsAndNonGoals: "Invariants and non-goals",
   modificationScope: "修改範圍",
   excludedScope: "排除範圍",
   acceptanceCriteria: "驗收條件",
@@ -53,7 +56,7 @@ function list(body: string): string[] {
 
 export function validateSpec(spec: TaskSpec): TaskSpec {
   if (!spec.repo || !spec.title || !spec.objective) throw new Error("spec requires repo, title, and objective");
-  if (!Object.keys(sections).every((key) => key in spec)) throw new Error("spec is missing required sections");
+  if (!Object.keys(sections).filter((key) => key !== "invariantsAndNonGoals").every((key) => key in spec)) throw new Error("spec is missing required sections");
   return spec;
 }
 
@@ -68,6 +71,7 @@ export function parseSpec(markdown: string): TaskSpec {
     title: readYamlString(frontmatter[1], "title"), createdAt: readYamlString(frontmatter[1], "created_at"),
     objective: sectionBody(body, sections.objective),
     backgroundAndDecisions: sectionBody(body, sections.backgroundAndDecisions),
+    ...(body.includes(`## ${sections.invariantsAndNonGoals}\n`) ? { invariantsAndNonGoals: list(sectionBody(body, sections.invariantsAndNonGoals)) } : {}),
     modificationScope: list(sectionBody(body, sections.modificationScope)),
     excludedScope: list(sectionBody(body, sections.excludedScope)),
     acceptanceCriteria: list(sectionBody(body, sections.acceptanceCriteria)),
@@ -81,7 +85,8 @@ export function renderSpec(spec: TaskSpec): string {
   validateSpec(spec);
   const asList = (items: string[]) => items.length ? items.map((item) => `- ${item}`).join("\n") : "無";
   const commands = spec.testRequirements.length ? spec.testRequirements.map((command) => `- \`${command}\``).join("\n") : "無";
-  return `---\nrepo: ${yamlString(resolve(spec.repo))}\nstatus: ${spec.status}\ntitle: ${yamlString(spec.title)}\ncreated_at: ${yamlString(spec.createdAt)}\n---\n\n# ${spec.title}\n\n## ${sections.objective}\n${spec.objective}\n\n## ${sections.backgroundAndDecisions}\n${spec.backgroundAndDecisions || "無"}\n\n## ${sections.modificationScope}\n${asList(spec.modificationScope)}\n\n## ${sections.excludedScope}\n${asList(spec.excludedScope)}\n\n## ${sections.acceptanceCriteria}\n${asList(spec.acceptanceCriteria)}\n\n## ${sections.testRequirements}\n${commands}\n\n## ${sections.risks}\n${asList(spec.risks)}\n\n## ${sections.unresolvedItems}\n${asList(spec.unresolvedItems)}\n`;
+  const invariantsAndNonGoals = spec.invariantsAndNonGoals?.length ? asList(spec.invariantsAndNonGoals) : "none";
+  return `---\nrepo: ${yamlString(resolve(spec.repo))}\nstatus: ${spec.status}\ntitle: ${yamlString(spec.title)}\ncreated_at: ${yamlString(spec.createdAt)}\n---\n\n# ${spec.title}\n\n## ${sections.objective}\n${spec.objective}\n\n## ${sections.backgroundAndDecisions}\n${spec.backgroundAndDecisions || "無"}\n\n## ${sections.invariantsAndNonGoals}\n${invariantsAndNonGoals}\n\n## ${sections.modificationScope}\n${asList(spec.modificationScope)}\n\n## ${sections.excludedScope}\n${asList(spec.excludedScope)}\n\n## ${sections.acceptanceCriteria}\n${asList(spec.acceptanceCriteria)}\n\n## ${sections.testRequirements}\n${commands}\n\n## ${sections.risks}\n${asList(spec.risks)}\n\n## ${sections.unresolvedItems}\n${asList(spec.unresolvedItems)}\n`;
 }
 
 export function assertRunnableSpec(spec: TaskSpec): void {
@@ -96,6 +101,7 @@ export function specToHandoff(spec: TaskSpec): Handoff {
     repo: spec.repo,
     objective: spec.objective,
     scope: { include: spec.modificationScope.length ? spec.modificationScope : ["."], exclude: spec.excludedScope },
+    ...(spec.invariantsAndNonGoals !== undefined ? { invariantsAndNonGoals: spec.invariantsAndNonGoals } : {}),
     acceptanceCriteria: spec.acceptanceCriteria,
     constraints: [`Spec: ${spec.title}`, ...(spec.excludedScope.length ? [`Do not modify: ${spec.excludedScope.join(", ")}`] : [])],
     tests: spec.testRequirements,

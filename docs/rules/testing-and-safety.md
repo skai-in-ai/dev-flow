@@ -32,6 +32,12 @@ READY_FOR_MAIN · Tier <n> · <cycle>/<maxCycles> cycles
 - Reviewer 沒有 write/edit/bash tools。
 - `ready_for_main` 只表示檢查通過；不代表已 commit 或部署。
 
+## 人工 checkpoint bridge
+
+當實作或 review 已產生需要保留的變更，而流程以 `needs_human` 或 runtime `failed` 停止時，人必須先確認保留的 worktree provenance，再建立 local checkpoint commit；接著由人選擇 narrow fix，最後執行 targeted follow-up review。這是手動的安全橋接，不是流程自動恢復：系統不會自動 commit、push、restart 或 discard。
+
+`needs_spec`/`specGap` 應先澄清產品語意；乾淨 baseline 的 preflight 失敗應先修正環境或既有程式碼，兩者都不應建立 checkpoint。上述手動橋接也不同於未來 automated Resume（#10）；#10 的 provenance、授權與 resume 行為仍未實作。
+
 ## 信任邊界
 
 - Handoff 的 `tests` 是 shell command，僅可接受受信任來源。

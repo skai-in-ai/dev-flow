@@ -11,6 +11,9 @@ Describe the desired change.
 ## Background and decisions
 Record repo-aware decisions and links.
 
+## Invariants and non-goals
+none
+
 ## Scope include
 - src/example.ts
 

@@ -15,7 +15,7 @@ created_at: "ISO-8601 timestamp"
 
 ## 必要章節
 
-依序包含：目標、背景與決策、修改範圍、排除範圍、驗收條件、測試要求、風險、未決事項。未決事項必須為「無」才能執行。
+依序包含：目標、背景與決策、Invariants and non-goals、修改範圍、排除範圍、驗收條件、測試要求、風險、未決事項。Invariants and non-goals 是選填，普通任務可填 `none`；未決事項必須為「無」才能執行。既有未含此節的 saved specs 仍可載入。
 
 測試要求每列只能放原始可執行命令，render 時使用 inline code，例如：
 

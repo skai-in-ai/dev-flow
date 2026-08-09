@@ -200,6 +200,14 @@ bin/dev-flow --max-tier 2
 
 當 reviewer 判斷問題屬於產品語意缺口時，可以回傳 `needs_spec`，附上缺少的語意與候選答案。流程會停止並將問題寫回 spec，讓 supervisor 和人繼續討論，而不是叫 implementer 對未定義的需求盲目重試。
 
+當修正 review finding 時，implementer 只需檢查同一個合理且可到達的 invariant 類別中的 sibling cases，並補上相關 regression tests；reviewer 會在同一輪批次檢查同類別、可到達且已核准的路徑，同時遵守明確 non-goals，不要求每個理論 sibling。這些界線由 handoff 的 optional `Invariants and non-goals` 欄位聲明；普通任務填 `none` 即可，legacy specs 不受影響。
+
+`needs_human` 不只有一種 recovery path：
+
+- 若 report 帶有 `needs_spec` / `specGap`，先澄清產品語意、更新 spec，再重跑；不需要建立 checkpoint。
+- 若是乾淨 baseline 的 preflight 失敗，先修正環境或既有程式碼，再重跑；這也不是 checkpoint bridge 的情境。
+- 只有在實作或 review 已經產生要保留的變更、且需要人工修正時，才先確認保留 worktree 的 provenance，建立 local checkpoint commit，再由人選擇 narrow fix，最後做 targeted follow-up review。這是手動 checkpoint bridge；不會自動 commit、push、restart 或 discard，也不是未來 automated Resume（#10）。
+
 ### 9. 不自動 commit、push 或 merge
 
 MVP 的完成狀態是：
@@ -241,7 +249,7 @@ export DEV_FLOW_QUEUE_LEDGER=/path/to/ledger        # 選用
 
 allowlist 對應的 checkout 必須已存在於 workspace root 下、是 Git worktree，且 `origin` 必須與 `OWNER/REPOSITORY` 完全一致；同名但不同 owner 的 checkout 會被拒絕。worker 使用本機 atomic poll lock 避免同一台 Mac 重複 claim，並以 GitHub ref 的 atomic creation 防止跨 Mac 重複處理。`gh` 必須能讀寫 Issue、push branch、建立 pull request；先用 `gh auth status` 確認登入。
 
-Issue body 必須遵循 [approved template](examples/github-issue-template.md)：`status: approved`、`max_tier`、全部必填區段、可直接執行的 raw tests，以及空白的 `Unresolved items` 都是必要條件。可先用以下方式做無副作用驗證：
+Issue body 必須遵循 [approved template](examples/github-issue-template.md)：`status: approved`、`max_tier`、全部必填區段、可直接執行的 raw tests，以及空白的 `Unresolved items` 都是必要條件；`Invariants and non-goals` 可省略，普通任務填 `none`。可先用以下方式做無副作用驗證：
 
 ```bash
 DEV_FLOW_FAKE_ISSUES=/path/to/issues.json bin/dev-flow-worker --dry-run
@@ -376,6 +384,7 @@ rm ~/Library/LaunchAgents/tw.lifestay.dev-flow-worker.plist
   "repo": "/path/to/workspace/example-repo",
   "objective": "修正登入 callback",
   "scope": { "include": ["src/auth/callback.ts"] },
+  "invariantsAndNonGoals": ["保留既有登入行為", "不修改公開 API"],
   "acceptanceCriteria": ["invalid state is rejected"],
   "constraints": ["do not change public API"],
   "tests": ["npm test"],
@@ -458,7 +467,7 @@ reviewer 的 read-only allowlist 是程式碼強制；implementer 則擁有 `bas
 以下分野很重要：
 
 - **程式碼強制**：reviewer 的唯讀工具集、角色 session 隔離、baseline 與 deterministic tests、修正次數上限。一般 CLI/Pi flow 到 `ready_for_main` 就停止；queue worker 只有在同一套 gate 全通過後，才會對它建立的隔離 branch commit，從 approved spec、structured outcome verification 與 post-commit Git metadata 建立 typed delivery payload，再 push 和建立 Draft PR。PR body 不接受或渲染 report、Pi events、agent output、prompts 或 ledger；缺少、malformed、測試失敗或 reviewer 非 pass 的 evidence 會在 push 前阻擋 publication。允許字串會以 plain text escape 並受逐欄、列表及整體 body 上限限制；它不會 merge 或部署。
-- **僅為 prompt 請求**：`renderPrompt()` 中的「不要 `git commit`、`git push`、`git reset`、`git checkout` 或修改 main」，以及「不要修改需求外檔案」。模型可以忽略這些文字，並沒有執行層攔截。
+- **僅為 prompt 請求**：`renderPrompt()` 中的「不要 `git commit`、`git push`、`git reset`、`git checkout` 或修改 main」，以及「不要修改需求外檔案」。同樣地，`src/adapters/pi/pi-process-adapter.ts` 裡要求 implementer 檢查合理且可到達的同 invariant 類別 sibling cases、補 regression tests，以及要求 reviewer 批次檢查同類別可到達且已核准的路徑、遵守 non-goals，都是 prompt-only guidance，不是程式碼強制。模型可以忽略這些文字，並沒有執行層攔截。
 
 另外，spec / handoff 內的測試命令會以 shell 直接執行，因此它們與程式碼具有相同的信任要求。GitHub Issue queue 的 title、body、labels 和 repository metadata 同樣是不受信任的輸入；allowlist 與 workspace-root 檢查只防止選到任意 checkout，`dev-flow-ready` 是人工 approval，不是 sandbox。
 

@@ -43,13 +43,15 @@ sequenceDiagram
     T-->>E: pass/fail（fail 即拒絕啟動，不呼叫任何 agent）
     E->>R: scope + risk notes
     R-->>E: tier candidate
-    E->>I: isolated implementation request
-    I-->>E: working-tree changes
+    E->>I: handoff + baseline + findings + decision log
+    Note over E,I: handoff may declare invariantsAndNonGoals; sibling checks and regression tests are prompt guidance
+    I-->>E: working-tree changes + implementation response
     E->>R: actual diff
     R-->>E: same or higher tier
     E->>T: commands
     T-->>E: pass/fail + output
-    E->>V: handoff + diff + tests + repo rules + decision log
+    E->>V: handoff (including invariants/non-goals) + diff + tests + repo rules + decision log
+    Note over E,V: reviewer batches reasonable reachable approved sibling findings and respects explicit non-goals
     V-->>E: pass/fail/escalate/needs_spec
     opt Tier 2（需 --max-tier 2，預設上限為 1）
       E->>S: same immutable artifacts

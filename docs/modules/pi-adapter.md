@@ -48,8 +48,8 @@ Adapter 逐行解析 Pi JSONL，取最後一個 assistant `message_end` 的 text
 
 ## Prompt 指示
 
-- `reviewerInstruction()`：verdict 選項、`needs_spec` 的使用時機與「不是 fail 的替代品」、候選答案的格式要求。
-- `implementerInstruction()`：原有指示、scope 硬性條款（不重構、不改格式、不動無關檔案）、以及有 `decision_log` 時的增量修正與逐條回應要求。scope 條款是目前唯一的範圍漂移防線，偵測面的 scope judge 尚未實作。
+- `reviewerInstruction()`：verdict 選項、`needs_spec` 的使用時機與「不是 fail 的替代品」、候選答案的格式要求。它也要求 reviewer 尊重 handoff 宣告的不變量與非目標，並在同一輪合併同類 sibling finding；檢查只限已核准、合理且可達的路徑，不要求窮舉理論分支。
+- `implementerInstruction()`：原有指示、scope 硬性條款（不重構、不改格式、不動無關檔案）、以及有 `decision_log` 時的增量修正與逐條回應要求。處理 finding 時，implementer 必須檢視同一個可達不變量類別中合理的 sibling case，並為相關情況補 regression test；不必嘗試每個理論 sibling。這些都是 prompt-only guidance，不是 deterministic scope enforcement。scope 條款是目前唯一的範圍漂移防線，偵測面的 scope judge 尚未實作。
 
 ## Context isolation
 

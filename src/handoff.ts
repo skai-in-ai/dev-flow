@@ -7,6 +7,7 @@ export interface Handoff {
   repo: string;
   objective: string;
   scope: { include: string[]; exclude?: string[] };
+  invariantsAndNonGoals?: string[];
   acceptanceCriteria: string[];
   constraints: string[];
   tests: string[];
@@ -49,8 +50,9 @@ export function validateHandoff(value: unknown): Handoff {
   const scope = v.scope as Record<string, unknown>;
   if (!(scope.include as unknown[]).every((x) => typeof x === "string")) throw new Error("handoff.scope.include must be string[]");
   if (scope.exclude !== undefined && (!Array.isArray(scope.exclude) || !(scope.exclude as unknown[]).every((x) => typeof x === "string"))) throw new Error("handoff.scope.exclude must be string[]");
+  if (v.invariantsAndNonGoals !== undefined && (!Array.isArray(v.invariantsAndNonGoals) || !(v.invariantsAndNonGoals as unknown[]).every((x) => typeof x === "string"))) throw new Error("handoff.invariantsAndNonGoals must be string[]");
   if (!v.delivery || typeof v.delivery !== "object") throw new Error("handoff.delivery is required");
   const delivery = v.delivery as Record<string, unknown>;
   if (delivery.mode !== "direct_main" || typeof delivery.requireApproval !== "boolean") throw new Error("handoff.delivery must use direct_main and boolean requireApproval");
-  return { repo: v.repo, objective: v.objective, scope: { include: scope.include as string[], exclude: (scope.exclude as string[] | undefined) }, acceptanceCriteria: strings("acceptanceCriteria"), constraints: strings("constraints"), tests: strings("tests"), riskNotes: strings("riskNotes"), delivery: { mode: "direct_main", requireApproval: delivery.requireApproval } };
+  return { repo: v.repo, objective: v.objective, scope: { include: scope.include as string[], exclude: (scope.exclude as string[] | undefined) }, ...(v.invariantsAndNonGoals !== undefined ? { invariantsAndNonGoals: v.invariantsAndNonGoals as string[] } : {}), acceptanceCriteria: strings("acceptanceCriteria"), constraints: strings("constraints"), tests: strings("tests"), riskNotes: strings("riskNotes"), delivery: { mode: "direct_main", requireApproval: delivery.requireApproval } };
 }

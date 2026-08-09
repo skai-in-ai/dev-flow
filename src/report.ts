@@ -136,13 +136,14 @@ function nextStep(input: ReportInput): string {
     return "變更留在 working tree，未 commit。看過 diff 後自行合併。";
   }
   if (input.status === "failed") {
-    return "流程中斷，變更可能停在中間狀態。先看上面的中止原因，確認 working tree 要保留還是丟棄。";
+    return "流程中斷，變更可能停在中間狀態。先看上面的中止原因；若要保留實作或 review 變更，先確認仍保留且來源正確的 worktree provenance，建立 local checkpoint commit，再由人選擇 narrow fix，最後執行 targeted follow-up review。這是手動 checkpoint bridge，不會自動 commit、push、restart 或 discard；未來 automated Resume（#10）另行處理。";
   }
   if (input.specGap) return "回答上面的選擇題，更新 spec 後重跑。";
+  if (input.status === "needs_human" && (input.cycles >= input.maxCycles || (input.error && input.decisionLog.findings.length > 0))) return "修正次數已用盡或失敗重複。先確認仍保留且來源正確的 worktree provenance，建立 local checkpoint commit；再由人選擇一個 narrow fix，最後執行 targeted follow-up review。這是手動 checkpoint bridge，不會自動 commit、push、restart 或 discard；未來 automated Resume（#10）另行處理。";
   if (input.error) return "上面的中止原因說明了為什麼再修一次也沒用。先處理它，再重跑。";
-  if (input.cycles >= input.maxCycles) return "修正次數已用盡。看「尚未解決」那幾條決定要自己修、還是改 spec 重派。";
+  if (input.cycles >= input.maxCycles) return "修正次數已用盡。先確認仍保留且來源正確的 worktree provenance，建立 local checkpoint commit；再由人選擇一個 narrow fix，最後執行 targeted follow-up review。這是手動 checkpoint bridge，不會自動 commit、push、restart 或 discard；未來 automated Resume（#10）另行處理。";
   // 還有 cycle 卻停下來，代表被別的規則收斂（例如 reviewer 要求升 tier 但撞到 --max-tier 上限）。
-  return `還剩 ${input.maxCycles - input.cycles} 次修正額度卻提前收斂，通常是 reviewer 要求升 tier 但撞到上限。看「尚未解決」那幾條，必要時用 --max-tier 2 重跑。`;
+  return `還剩 ${input.maxCycles - input.cycles} 次修正額度卻提前收斂，通常是 reviewer 要求升 tier 但撞到上限。先確認仍保留且來源正確的 worktree provenance，建立 local checkpoint commit；再由人選擇 narrow fix 並執行 targeted follow-up review。這是手動 checkpoint bridge，不會自動 commit、push、restart 或 discard；未來 automated Resume（#10）另行處理。`;
 }
 
 function short(model: string): string {
