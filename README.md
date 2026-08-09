@@ -228,6 +228,8 @@ ChatGPT 讀取 repo
 
 這是一般 CLI/Pi 流程以外的明確發布入口。只有 `ready_for_main` 且 deterministic tests 與 review gates 全部通過時，worker 才會對自己建立的隔離 branch commit、push 並建立 Draft PR；它不會 merge 或部署。非成功結果會標記為 `dev-flow-needs-human`、保留 ledger，並讓下一個 queue 項目繼續執行。
 
+allowlist 的 checkout 必須使用 canonical repository name `dev-flow`：worker 會以 repo 名稱尋找同名目錄。若舊 checkout 仍叫 `agent-orchestrator`，請先改名；若不能改名，可在 workspace root 建立只讀相容 symlink（例如 `ln -s /path/to/agent-orchestrator /path/to/dev-flow`），不要複製出第二份工作樹。這些 `agent-orchestrator` package 與 `AGENT_ORCHESTRATOR_*` 環境變數名稱目前仍是相容名稱，待另行 migration，請勿因本文件改名而自行修改它們。
+
 設定時必須提供 repo allowlist：
 
 ```bash
@@ -245,7 +247,7 @@ Issue body 必須遵循 [approved template](examples/github-issue-template.md)�
 DEV_FLOW_FAKE_ISSUES=/path/to/issues.json bin/dev-flow-worker --dry-run
 ```
 
-`--dry-run` 不會呼叫 GitHub、建立 git worktree、commit、push 或建立 PR。排程可參考 [launchd 範例](deployment/dev-flow-worker.plist.example)；本專案不會自動安裝或載入它，請先檢查環境變數再手動啟用。
+`--dry-run` 不會呼叫 GitHub、建立 git worktree、commit、push 或建立 PR。Worker 範例每 300 秒 poll 一次，每次 poll 最多處理一個 Issue。排程可參考 [launchd 範例](deployment/dev-flow-worker.plist.example)；本專案不會自動安裝或載入它，請先檢查環境變數再手動啟用。
 
 Issue 的 label lifecycle 是 `dev-flow-ready` → `dev-flow-running` → `dev-flow-pr-ready` / `dev-flow-needs-human`。目前一個 Issue 只允許一次 GitHub-side claim；需重跑時建立新 Issue。worktree 與 job ledger 會保留供診斷，不會自動清理。完整的 contract、失敗語意、部署與操作限制見 [GitHub Issue queue 模組文件](docs/modules/github-issue-queue.md)。
 
@@ -299,13 +301,13 @@ Issue 的 label lifecycle 是 `dev-flow-ready` → `dev-flow-running` → `dev-f
 - Pi 已透過 Codex OAuth 登入
 
 ```bash
-git clone <this-repository>
-cd agent-orchestrator
+git clone git@github.com:skai-in-ai/dev-flow.git
+cd dev-flow
 npm install
 npm test
 ```
 
-`npm install` 只會建立此 repo 的 local `node_modules`，不需要全域 npm package。
+`npm install` 只會建立此 repo 的 local `node_modules`，不需要全域 npm package。`npm install`、build 與測試不會自動安裝或載入 GitHub queue 的 LaunchAgent。
 
 ## 使用方式
 
@@ -320,13 +322,13 @@ npm test
 執行最新一份：
 
 ```bash
-/path/to/agent-orchestrator/bin/dev-flow
+/path/to/dev-flow/bin/dev-flow
 ```
 
 或指定 spec：
 
 ```bash
-/path/to/agent-orchestrator/bin/dev-flow path/to/spec.md
+/path/to/dev-flow/bin/dev-flow path/to/spec.md
 ```
 
 spec 尚未 approved 或仍有未決事項時，流程不會啟動，而是列出待處理問題。
@@ -348,6 +350,24 @@ spec 尚未 approved 或仍有未決事項時，流程不會啟動，而是列�
 ```text
 /orchestrate /absolute/path/handoff.json
 ```
+
+### GitHub queue LaunchAgent（Mac）
+
+以下是手動安裝、檢查、reload 與移除範例；`id -u` 會使用目前登入使用者的 dynamic UID，不要改成固定的 501 或 502。先編輯 plist 中的 allowlist 與 checkout 路徑，再執行：
+
+```bash
+mkdir -p ~/Library/LaunchAgents
+cp /path/to/dev-flow/deployment/dev-flow-worker.plist.example ~/Library/LaunchAgents/tw.lifestay.dev-flow-worker.plist
+launchctl bootstrap gui/"$(id -u)" ~/Library/LaunchAgents/tw.lifestay.dev-flow-worker.plist
+launchctl print gui/"$(id -u)"/tw.lifestay.dev-flow-worker
+tail -n 50 /tmp/dev-flow-worker.out
+tail -n 50 /tmp/dev-flow-worker.err
+launchctl kickstart -k gui/"$(id -u)"/tw.lifestay.dev-flow-worker
+launchctl bootout gui/"$(id -u)"/tw.lifestay.dev-flow-worker
+rm ~/Library/LaunchAgents/tw.lifestay.dev-flow-worker.plist
+```
+
+`npm install` 或 build 不會執行上述安裝。`tw.lifestay.dev-flow-worker`、`/Users/skai.wu/side` 與 `OWNER/REPOSITORY` 是目前 maintainer Mac instance 的部署範例，不是可攜的預設值；請依實際主機調整。
 
 ### 方式三：handoff JSON
 

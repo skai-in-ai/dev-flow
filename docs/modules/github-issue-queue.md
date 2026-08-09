@@ -113,13 +113,29 @@ Local job ledger 預設在：
 
 ## 設定與手動執行
 
+Worker 以 repository 的 canonical name 尋找 checkout，因此 checkout 目錄必須叫 `dev-flow`。例如：
+
+```bash
+git clone git@github.com:skai-in-ai/dev-flow.git /path/to/dev-flow
+cd /path/to/dev-flow
+npm install
+```
+
+若既有 checkout 仍叫 `agent-orchestrator`，請優先將目錄改名為 `dev-flow`；不能改名時，可在 workspace root 建立安全的相容 symlink：
+
+```bash
+ln -s /path/to/agent-orchestrator /path/to/dev-flow
+```
+
+`agent-orchestrator` package 名稱與 `AGENT_ORCHESTRATOR_*` 環境變數是目前的 compatibility names，待另行 migration；本次文件更新不改動它們。
+
 ```bash
 export DEV_FLOW_ALLOWED_REPOS=OWNER/REPOSITORY[,OWNER/OTHER]
 export DEV_FLOW_WORKSPACE_ROOT=/Users/skai.wu/side
 export DEV_FLOW_MAX_TIER=1
 export DEV_FLOW_QUEUE_LEDGER=/Users/skai.wu/side/.orchestrator/queue-jobs
 
-bin/dev-flow-worker
+/path/to/dev-flow/bin/dev-flow-worker
 ```
 
 `DEV_FLOW_ALLOWED_REPOS` 必填。`DEV_FLOW_MAX_TIER` 是操作者成本/風險上限，Issue 內 `max_tier` 只能再往下限制，不能突破環境上限。
@@ -138,15 +154,29 @@ bin/dev-flow-worker --dry-run
 
 ## launchd
 
-`deployment/dev-flow-worker.plist.example` 是 Mac 範例，預設每 300 秒單次 poll。啟用前：
+`deployment/dev-flow-worker.plist.example` 是 Mac 範例，預設每 300 秒 poll 一次，每次 poll 最多處理一個 Issue。啟用前：
 
 1. 確認 `gh auth status`。
 2. 將 `DEV_FLOW_ALLOWED_REPOS` 改為實際 allowlist。
 3. 確認 `PATH` 含 Homebrew `node`、`npm`、`gh` 與 Pi CLI。
 4. 審查 `DEV_FLOW_MAX_TIER`。
-5. 複製 plist 到 `~/Library/LaunchAgents/`，再以 `launchctl bootstrap` 載入。
+5. 確認 plist 的 `/path/to/dev-flow` checkout 路徑與同名目錄要求。
 
-本 repo 不會在 install/build 過程自動載入 LaunchAgent。
+以下命令可安裝、bootstrap、檢查 health、查看 logs、reload 與移除；`id -u` 使用目前使用者的 dynamic UID：
+
+```bash
+mkdir -p ~/Library/LaunchAgents
+cp /path/to/dev-flow/deployment/dev-flow-worker.plist.example ~/Library/LaunchAgents/tw.lifestay.dev-flow-worker.plist
+launchctl bootstrap gui/"$(id -u)" ~/Library/LaunchAgents/tw.lifestay.dev-flow-worker.plist
+launchctl print gui/"$(id -u)"/tw.lifestay.dev-flow-worker
+tail -n 50 /tmp/dev-flow-worker.out
+tail -n 50 /tmp/dev-flow-worker.err
+launchctl kickstart -k gui/"$(id -u)"/tw.lifestay.dev-flow-worker
+launchctl bootout gui/"$(id -u)"/tw.lifestay.dev-flow-worker
+rm ~/Library/LaunchAgents/tw.lifestay.dev-flow-worker.plist
+```
+
+上例的 `tw.lifestay.dev-flow-worker`、`/Users/skai.wu/side`、`OWNER/REPOSITORY` 與 `/tmp` log 路徑是目前 maintainer Mac instance 的部署範例，不是可攜的預設值；請依實際主機調整。`npm install`、build 或測試不會自動安裝 LaunchAgent。
 
 ## 目前限制
 

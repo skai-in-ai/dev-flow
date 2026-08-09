@@ -16,7 +16,7 @@ Use `DEV_FLOW_DRY_RUN=1`/`--dry-run` with a local JSON fixture in `DEV_FLOW_FAKE
 
 ## 真實 E2E
 
-單元測試使用 fake agent。要驗證登入、模型名稱、Pi CLI flags 與真實 reviewer output，需在一次性乾淨 Git repo 執行完整 handoff，確認結果為：
+單元測試使用 fake agent。要驗證登入、模型名稱、Pi CLI flags 與真實 reviewer output，需在一次性乾淨 Git repo 執行完整 handoff；目前文件不宣稱第一個真實 Issue-to-PR E2E 已通過。確認結果為：
 
 ```text
 READY_FOR_MAIN · Tier <n> · <cycle>/<maxCycles> cycles
@@ -43,6 +43,26 @@ READY_FOR_MAIN · Tier <n> · <cycle>/<maxCycles> cycles
 - Implementer 有 bash 與寫檔能力；Pi 層的 tool allowlist 限制工具種類，但不是容器或 OS sandbox。
 - `scope.include/exclude` 目前是 routing/review contract，沒有 deterministic path enforcement。
 - Reviewer 讀取的 repo rules 目前只有目標 repo 根目錄 `CLAUDE.md`。
+
+## Mac worker LaunchAgent 檢查
+
+`deployment/dev-flow-worker.plist.example` 是目前 maintainer Mac worker pattern 的範例，不是 portable defaults；其中 `/Users/skai.wu/side`、`OWNER/REPOSITORY`、`tw.lifestay.dev-flow-worker` 與 `/tmp` logs 都必須依主機調整。範例每 300 秒 poll，單次最多處理一個 Issue。`npm install`、build 與測試不會自動安裝 LaunchAgent。
+
+checkout 必須使用 `dev-flow` 這個 canonical 目錄名；舊的 `agent-orchestrator` checkout 可改名，或用 `ln -s /path/to/agent-orchestrator /path/to/dev-flow` 提供相容路徑。`agent-orchestrator` package 與 `AGENT_ORCHESTRATOR_*` 是待另行 migration 的 compatibility names。
+
+安裝、health inspection、log inspection、reload 與 uninstall 都應使用目前使用者的 dynamic UID：
+
+```bash
+mkdir -p ~/Library/LaunchAgents
+cp /path/to/dev-flow/deployment/dev-flow-worker.plist.example ~/Library/LaunchAgents/tw.lifestay.dev-flow-worker.plist
+launchctl bootstrap gui/"$(id -u)" ~/Library/LaunchAgents/tw.lifestay.dev-flow-worker.plist
+launchctl print gui/"$(id -u)"/tw.lifestay.dev-flow-worker
+tail -n 50 /tmp/dev-flow-worker.out
+tail -n 50 /tmp/dev-flow-worker.err
+launchctl kickstart -k gui/"$(id -u)"/tw.lifestay.dev-flow-worker
+launchctl bootout gui/"$(id -u)"/tw.lifestay.dev-flow-worker
+rm ~/Library/LaunchAgents/tw.lifestay.dev-flow-worker.plist
+```
 
 ## Extension 部署檢查
 
