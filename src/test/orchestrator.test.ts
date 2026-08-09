@@ -31,6 +31,8 @@ test("max-tier cap clamps high-risk routing and blocks reviewer escalation witho
   );
   assert.equal(outcome.status, "needs_human");
   assert.equal(outcome.tier, 1);
+  assert.equal(outcome.verification.reviewerVerdict, "escalate");
+  assert.deepEqual(outcome.verification.tests, [{ command: "true", passed: true }]);
   assert.match(outcome.routing.reasons.join("\n"), /max-tier cap applied: 1/);
   assert.deepEqual(agents.calls.map((call) => call.role), ["implementer", "reviewer"]);
 });
@@ -44,6 +46,8 @@ test("the last fix is reviewed before a human is asked for", async () => {
   const path = await repo(); const agents = new FakeAgents([{ summary: "impl" }, { summary: "bad 1", verdict: "fail" }, { summary: "impl" }, { summary: "bad 2", verdict: "fail" }, { summary: "impl" }, { summary: "bad 3", verdict: "fail" }, { summary: "impl" }, { summary: "bad 4", verdict: "fail" }]);
   const outcome = await new Orchestrator({ agents, tests: new PassingTests() }).run(handoff(path), () => {});
   assert.equal(outcome.status, "needs_human"); assert.equal(outcome.cycles, 4); assert.equal(agents.calls.filter((x) => x.role === "implementer").length, 4);
+  assert.equal(outcome.verification.reviewerVerdict, "fail");
+  assert.deepEqual(outcome.verification.tests, [{ command: "true", passed: true }]);
 });
 
 test("carries every prior cycle's findings and responses into the later reviewer's artifacts", async () => {
@@ -168,6 +172,8 @@ test("an undefined product semantic returns to discussion without consuming a ro
 
   assert.equal(outcome.status, "needs_human");
   assert.equal(outcome.cycles, 1, "a spec gap must not consume a cycle");
+  assert.equal(outcome.verification.reviewerVerdict, "needs_spec");
+  assert.deepEqual(outcome.verification.tests, [{ command: "true", passed: true }]);
   assert.equal(agents.calls.filter((call) => call.role === "implementer").length, 1, "no retry may be attempted");
   assert.equal(outcome.specGap?.candidates.length, 2);
   assert.match(outcome.specGap?.semantic ?? "", /未定義/);
@@ -206,6 +212,25 @@ test("an escalation at the highest tier defers to Sol instead of burning a cycle
   assert.deepEqual(agents.calls.map((call) => call.role), ["implementer", "reviewer", "final_reviewer"]);
 });
 
+test("a final-review spec gap preserves both review verdicts", async () => {
+  const path = await repo();
+  const highRisk = { ...handoff(path), objective: "add database migration" };
+  const agents = new FakeAgents([
+    { summary: "impl" }, { summary: "VERDICT: pass", verdict: "pass" },
+    { summary: "VERDICT: needs_spec", verdict: "needs_spec", findings: [
+      "retention period is undefined",
+      "delete immediately",
+      "retain for thirty days",
+    ] },
+  ]);
+  const outcome = await new Orchestrator({ agents, tests: new PassingTests() }).run(highRisk, () => {});
+
+  assert.equal(outcome.status, "needs_human");
+  assert.equal(outcome.verification.reviewerVerdict, "pass");
+  assert.equal(outcome.verification.finalReviewerVerdict, "needs_spec");
+  assert.deepEqual(outcome.verification.tests, [{ command: "true", passed: true }]);
+});
+
 test("the final fix is reviewed by every required gate before a human is asked", async () => {
   const path = await repo();
   const highRisk = { ...handoff(path), objective: "add database migration" };
@@ -220,6 +245,9 @@ test("the final fix is reviewed by every required gate before a human is asked",
   assert.equal(outcome.status, "needs_human");
   assert.equal(outcome.cycles, 4);
   assert.equal(outcome.maxCycles, 4);
+  assert.equal(outcome.verification.reviewerVerdict, "pass");
+  assert.equal(outcome.verification.finalReviewerVerdict, "fail");
+  assert.deepEqual(outcome.verification.tests, [{ command: "true", passed: true }]);
   assert.equal(agents.calls.filter((call) => call.role === "final_reviewer").length, 1, "the last fix must still reach the Sol gate");
 });
 
@@ -270,6 +298,9 @@ test("captures what cannot be recovered later: spec snapshot, diff, router sessi
   assert.equal(outcome.cost.byRole.reviewer, 0.065);
   assert.equal(outcome.cost.byRole.router, 0.003);
   assert.equal(outcome.cost.total, 0.073);
+  assert.ok(typeof outcome.durationMs === "number");
+  assert.equal(outcome.verification.reviewerVerdict, "pass");
+  assert.ok(outcome.verification.tests.every((test) => test.passed));
 
   const index = (await readFile(join(path, ".orchestrator", "index.jsonl"), "utf8")).trim().split("\n");
   const row = JSON.parse(index.at(-1)!) as Record<string, unknown>;
@@ -312,6 +343,7 @@ test("stops as soon as a failure repeats verbatim instead of burning the remaini
   assert.equal(outcome.status, "needs_human");
   assert.equal(outcome.cycles, 2, "the identical second failure must end the run, not continue to cycle 4");
   assert.equal(agents.calls.filter((call) => call.role === "implementer").length, 2);
+  assert.deepEqual(outcome.verification.tests, [{ command: "true", passed: false }]);
   const summary = await readFile(join(path, ".orchestrator", "runs", await latestRun(path), "summary.md"), "utf8");
   assert.match(summary, /identical failure repeated/);
 });
@@ -325,6 +357,7 @@ test("refuses to spend anything when the tests already fail on an untouched base
   const outcome = await new Orchestrator({ agents, tests: new BrokenEnvironment() }).run(handoff(path), () => {});
 
   assert.equal(outcome.status, "needs_human");
+  assert.deepEqual(outcome.verification.tests, [{ command: "true", passed: false }]);
   assert.equal(outcome.cost.total, 0, "not a single model call may be paid for");
   assert.equal(agents.calls.length, 0, "no agent may be started, not even the router");
   const summary = await readFile(join(path, ".orchestrator", "runs", await latestRun(path), "summary.md"), "utf8");
@@ -348,6 +381,23 @@ test("a crash is recorded as a failed run instead of vanishing", async () => {
   assert.equal(summary.status, "failed", "the run must leave a record; three real runs previously vanished without one");
   assert.match(summary.error ?? "", /connection reset by peer/, "the child process stderr is the only clue to the root cause");
   assert.equal(typeof summary.cost.total, "number", "accumulated cost must still be accounted for");
+});
+
+test("a crash after verification preserves the accumulated evidence", async () => {
+  const path = await repo();
+  class ExplodingReviewer implements AgentRunner {
+    async run(request: AgentRunRequest): Promise<AgentRunResult> {
+      if (request.role === "reviewer") throw new Error("reviewer connection reset");
+      return { summary: "impl" };
+    }
+  }
+
+  await assert.rejects(new Orchestrator({ agents: new ExplodingReviewer(), tests: new PassingTests() }).run(handoff(path), () => {}), /reviewer connection reset/);
+
+  const summary = JSON.parse(await readFile(join(path, ".orchestrator", "runs", await latestRun(path), "summary.json"), "utf8")) as { verification: { tests: Array<{ command: string; passed: boolean }>; reviewerVerdict: string; finalReviewerVerdict: string } };
+  assert.deepEqual(summary.verification.tests, [{ command: "true", passed: true }]);
+  assert.equal(summary.verification.reviewerVerdict, "not_run");
+  assert.equal(summary.verification.finalReviewerVerdict, "not_run");
 });
 
 test("an operator tier cap also caps the implementer ladder", async () => {

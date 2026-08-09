@@ -150,40 +150,59 @@ async function repoPath(config: QueueConfig, repository: string): Promise<string
 }
 async function git(cwd: string, args: string[]): Promise<string> { return (await execFileAsync("git", args, { cwd, maxBuffer: 4 * 1024 * 1024 })).stdout; }
 const pollLockStaleMs = 30 * 60 * 1000;
-/** Conservative report budget, leaving room for PR metadata and wrapper markup. */
-export const MAX_DRAFT_PR_REPORT_BYTES = 48 * 1024;
-const reportTruncationMarker = "\n\n[dev-flow report truncated to fit the GitHub PR body limit]";
-
-function redactLocalPaths(report: string, localPaths: readonly string[]): string {
-  return [...new Set(localPaths.filter(Boolean))]
-    .sort((a, b) => b.length - a.length)
-    .reduce((text, path) => text.split(path).join("[local path omitted]"), report);
+export const MAX_DRAFT_PR_BODY_BYTES = 60 * 1024;
+const MAX_DELIVERY_FIELD_LENGTH = 4 * 1024;
+const MAX_DELIVERY_LIST_ITEMS = 100;
+const MAX_DELIVERY_LIST_ITEM_LENGTH = 512;
+export interface DeliveryChangedFile { path: string; status: string; }
+export interface DeliveryGitEvidence { files: DeliveryChangedFile[]; filesChanged: number; insertions: number; deletions: number; }
+export interface DraftPullRequestDelivery {
+  issueNumber: number;
+  objective: string;
+  backgroundAndDecisions: string;
+  risks: string[];
+  acceptanceCriteria: string[];
+  approvedInclude: string[];
+  approvedExclude: string[];
+  git: DeliveryGitEvidence;
+  tests: Array<{ command: string; passed: boolean }>;
+  reviewerVerdict: string;
+  finalReviewerVerdict: string;
+  status: RunOutcome["status"];
+  tier: number;
+  cycles: number;
+  costUsd: number;
+  durationMs: number;
+  runId: string;
 }
-
-function truncateUtf8(value: string, maxBytes: number): { value: string; truncated: boolean } {
-  if (Buffer.byteLength(value, "utf8") <= maxBytes) return { value, truncated: false };
-  const markerBytes = Buffer.byteLength(reportTruncationMarker, "utf8");
-  const target = Math.max(0, maxBytes - markerBytes);
-  let end = Math.min(value.length, target);
-  while (end > 0 && Buffer.byteLength(value.slice(0, end), "utf8") > target) end--;
-  return { value: `${value.slice(0, end)}${reportTruncationMarker}`, truncated: true };
+function plain(value: string, limit = MAX_DELIVERY_FIELD_LENGTH): string {
+  const text = value.replace(/[\r\n\t]+/g, " ").trim();
+  if (!text || text.length > limit) throw new Error("delivery payload contains a missing or oversized field");
+  const escaped = text.replace(/[&<>`*_\\[\]{}()#+\-.!|>~]/g, (character) => `\\${character}`);
+  return escaped.replace(/\b(?:https?|ftp):\/\//gi, (prefix) => prefix.replace(":", "&#58;"));
 }
-
-/** Render only GitHub-visible data; local report/workspace paths never enter the PR body. */
-export function draftPullRequestBody(metadata: { issueNumber: number; job: string; status: string; runId: string; reportPath: string; workspacePath: string }, report: string): string {
-  const safeReport = redactLocalPaths(report, [metadata.reportPath, metadata.workspacePath]);
-  const neutralized = safeReport.replace(/<\/details\s*>/gi, "&lt;/details&gt;");
-  const limited = truncateUtf8(neutralized, MAX_DRAFT_PR_REPORT_BYTES);
-  return `Closes #${metadata.issueNumber} (review only; not merged)\n\nJob: ${metadata.job}\nStatus: ${metadata.status}\nRun: ${metadata.runId}\n\n<details>\n<summary>dev-flow report</summary>\n\n${limited.value}\n\n</details>`;
+function list(values: readonly string[], name: string): string[] {
+  if (values.length > MAX_DELIVERY_LIST_ITEMS) throw new Error(`delivery payload ${name} list is too large`);
+  return values.map((value) => plain(value, MAX_DELIVERY_LIST_ITEM_LENGTH));
 }
-
-async function readDraftReport(reportPath: string): Promise<string> {
-  try {
-    return await readFile(reportPath, "utf8");
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(`dev-flow report is missing or unreadable; no PR was published: ${detail}`);
-  }
+function validateDelivery(payload: DraftPullRequestDelivery): void {
+  if (!Number.isInteger(payload.issueNumber) || payload.issueNumber <= 0 || payload.status !== "ready_for_main" || (payload.reviewerVerdict !== "pass" && !(payload.reviewerVerdict === "escalate" && payload.tier === 2)) || (payload.tier < 2 && payload.finalReviewerVerdict !== "not_run") || (payload.tier === 2 && payload.finalReviewerVerdict !== "pass")) throw new Error("incomplete delivery evidence; no PR was published");
+  if (!Number.isFinite(payload.costUsd) || payload.costUsd < 0 || !Number.isFinite(payload.durationMs) || payload.durationMs < 0 || !Number.isInteger(payload.tier) || ![0, 1, 2].includes(payload.tier) || !Number.isInteger(payload.cycles) || payload.cycles < 0) throw new Error("malformed delivery result; no PR was published");
+  plain(payload.objective); plain(payload.backgroundAndDecisions); list(payload.risks, "risks"); list(payload.acceptanceCriteria, "acceptanceCriteria"); list(payload.approvedInclude, "approvedInclude"); list(payload.approvedExclude, "approvedExclude");
+  if (!payload.git.files.length || payload.git.files.length > MAX_DELIVERY_LIST_ITEMS || !Number.isSafeInteger(payload.git.filesChanged) || payload.git.filesChanged !== payload.git.files.length || !Number.isSafeInteger(payload.git.insertions) || payload.git.insertions < 0 || !Number.isSafeInteger(payload.git.deletions) || payload.git.deletions < 0) throw new Error("missing Git delivery evidence; no PR was published");
+  payload.git.files.forEach((file) => { plain(file.path, MAX_DELIVERY_LIST_ITEM_LENGTH); plain(file.status, 32); });
+  if (!payload.tests.length || payload.tests.length > MAX_DELIVERY_LIST_ITEMS || payload.tests.some((test) => !plain(test.command, MAX_DELIVERY_LIST_ITEM_LENGTH) || test.passed !== true)) throw new Error("unsuccessful test evidence; no PR was published");
+  plain(payload.runId, 256);
+}
+/** The only PR-body boundary: explicit structured delivery evidence, never a report or agent text. */
+export function draftPullRequestBody(payload: DraftPullRequestDelivery): string {
+  validateDelivery(payload);
+  const bullets = (values: readonly string[]) => values.length ? values.map((value) => `- ${value}`).join("\n") : "- None";
+  const files = payload.git.files.map((file) => `- ${plain(file.status, 32)} ${plain(file.path, MAX_DELIVERY_LIST_ITEM_LENGTH)}`).join("\n");
+  const tests = payload.tests.map((test) => `- PASS: ${plain(test.command, MAX_DELIVERY_LIST_ITEM_LENGTH)}`).join("\n");
+  const body = `Closes #${payload.issueNumber} (review only; not merged)\n\n## Why\nObjective: ${plain(payload.objective)}\n\nBackground and decisions: ${plain(payload.backgroundAndDecisions)}\n\nRisks:\n${bullets(list(payload.risks, "risks"))}\n\nAcceptance criteria:\n${bullets(list(payload.acceptanceCriteria, "acceptanceCriteria"))}\n\n## How\nActual Git changes:\n${files}\n\nGit diff statistics: ${payload.git.filesChanged} files changed, ${payload.git.insertions} insertions(+), ${payload.git.deletions} deletions(-)\n\n## Approved scope\nInclude:\n${bullets(list(payload.approvedInclude, "approvedInclude"))}\n\nActual changed files are listed above for scope-drift review.\n\n## Verification result\nTests:\n${tests}\nReviewer verdict: ${plain(payload.reviewerVerdict, 32)}\nFinal-review verdict: ${plain(payload.finalReviewerVerdict, 32)}\nStatus: ${plain(payload.status, 32)}\nTier: ${payload.tier}\nCycles: ${payload.cycles}\nCost: US$${payload.costUsd.toFixed(5)}\nDuration: ${Math.round(payload.durationMs)} ms\nRun ID: ${plain(payload.runId, 256)}\n\n## Intentionally excluded\n${bullets(list(payload.approvedExclude, "approvedExclude"))}\n\nLocal reports and ledgers remain available only as non-public traceability artifacts.`;
+  if (Buffer.byteLength(body, "utf8") > MAX_DRAFT_PR_BODY_BYTES) throw new Error("delivery PR body exceeds conservative GitHub limit; no PR was published");
+  return body;
 }
 
 async function acquirePollLock(config: QueueConfig, lockPath: string): Promise<boolean> {
@@ -226,6 +245,11 @@ async function worktree(config: QueueConfig, repo: string, issue: QueueIssue): P
 export function publicationFiles(unstaged: string, staged: string, untracked: string): string[] {
   const lines = (value: string) => value.trim().split("\n").map((file) => file.trim()).filter(Boolean);
   return [...new Set([...lines(unstaged), ...lines(staged), ...lines(untracked)])];
+}
+async function gitDeliveryEvidence(cwd: string): Promise<DeliveryGitEvidence> {
+  const names = (await git(cwd, ["diff-tree", "--no-commit-id", "--name-status", "-r", "HEAD"])).trim().split("\n").filter(Boolean).map((line) => { const [status, ...parts] = line.split("\t"); return { status, path: parts.at(-1) ?? "" }; });
+  const stats = (await git(cwd, ["show", "--format=", "--numstat", "HEAD"])).trim().split("\n").filter(Boolean).reduce((total, line) => { const [insertions, deletions] = line.split("\t"); return { filesChanged: total.filesChanged + 1, insertions: total.insertions + (Number(insertions) || 0), deletions: total.deletions + (Number(deletions) || 0) }; }, { filesChanged: 0, insertions: 0, deletions: 0 });
+  return { files: names, ...stats };
 }
 
 export async function pollOnce(adapter: GitHubAdapter, config: QueueConfig): Promise<{ status: "idle" | "dry_run" | "success" | "failed"; issue?: QueueIssue; error?: string }> {
@@ -270,10 +294,15 @@ export async function pollOnce(adapter: GitHubAdapter, config: QueueConfig): Pro
       await git(tree.cwd, ["ls-files", "--others", "--exclude-standard"]),
     );
     if (!files.length || files.some((file) => file.startsWith("../") || file.startsWith("/"))) throw new Error("no safe changes to publish");
-    const reportPath = join(tree.cwd, ".orchestrator", "runs", outcome.runId, "report.md");
-    const report = await readDraftReport(reportPath);
-    const prBody = draftPullRequestBody({ issueNumber: issue.number, job, status: "ready_for_main", runId: outcome.runId, reportPath, workspacePath: config.workspaceRoot }, report);
-    await git(tree.cwd, ["add", "--", ...files]); await git(tree.cwd, ["commit", "--only", "-m", `codex: issue #${issue.number}`, "--", ...files]); await git(tree.cwd, ["push", "--set-upstream", "origin", tree.branch]); pushedBranch = tree;
+    await git(tree.cwd, ["add", "--", ...files]); await git(tree.cwd, ["commit", "--only", "-m", `codex: issue #${issue.number}`, "--", ...files]);
+    const prBody = draftPullRequestBody({
+      issueNumber: issue.number, objective: parsed.spec.objective, backgroundAndDecisions: parsed.spec.backgroundAndDecisions,
+      risks: parsed.spec.risks, acceptanceCriteria: parsed.spec.acceptanceCriteria, approvedInclude: parsed.spec.modificationScope,
+      approvedExclude: parsed.spec.excludedScope, git: await gitDeliveryEvidence(tree.cwd), tests: outcome.verification.tests,
+      reviewerVerdict: outcome.verification.reviewerVerdict, finalReviewerVerdict: outcome.verification.finalReviewerVerdict, status: outcome.status, tier: outcome.tier, cycles: outcome.cycles,
+      costUsd: outcome.cost.total, durationMs: outcome.durationMs, runId: outcome.runId,
+    });
+    await git(tree.cwd, ["push", "--set-upstream", "origin", tree.branch]); pushedBranch = tree;
     const pr = await adapter.createDraftPullRequest(issue.repository, tree.branch, `Draft: ${issue.title}`, prBody);
     await adapter.removeLabel(issue, "dev-flow-running"); await adapter.addLabel(issue, "dev-flow-pr-ready"); prReadyLabelApplied = true; await adapter.comment(issue, `Draft PR ready for review: ${pr.url}\nJob: ${job}`); await record("summary.json", { status: "success", pr, outcome }); return { status: "success", issue };
   } catch (error) {
