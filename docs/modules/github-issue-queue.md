@@ -66,9 +66,9 @@ Worker 只選 open 且帶 `dev-flow-ready` 的 Issue，每次 poll 最多處理�
 ## Claim 與重複防護
 
 1. Workspace 內以 atomic `mkdir` 作單 worker lock。
-2. Lock owner 不存在或超過 30 分鐘時可恢復，恢復事件會寫入 ledger。
-3. GitHub 上使用 Issue-specific Git ref creation 作 compare-and-set；只有一個 worker 能成功建立。
-4. Claim 成功後才將 label 從 ready 轉為 running。
+2. Lock 若有同 host 的有效 owner PID，會以 PID liveness 保持 active，即使超過 30 分鐘；dead PID 可立即恢復。foreign host、無法驗證 liveness 或 malformed metadata 才以 30 分鐘 age threshold fallback，恢復事件會寫入 ledger。
+3. GitHub 上使用 Issue-specific Git ref creation 作 compare-and-set；claim 同時綁定 validated default branch 與 40-character SHA，只有一個 worker 能成功建立。
+4. Claim 成功後才將 label 從 ready 轉為 running。Worktree 建立前只 fetch `origin` 的該 default branch，並驗證 fetched SHA 與 claim 完全一致；不會 merge 或修改 primary checkout。
 
 目前 claim ref 會保留，所以同一 Issue 是 one-shot。若 needs-human 後要重跑，請以更新後 spec 建立新 Issue，不要只重新加 ready label。
 
@@ -78,6 +78,7 @@ Worker 不從 Issue body 接受絕對路徑。它將 `OWNER/REPOSITORY` 對應�
 
 - repo 在 `DEV_FLOW_ALLOWED_REPOS` 中
 - workspace root 未逃出 `/Users/skai.wu/side`
+- claim 的 default branch 與 SHA 經驗證，fetch 後 worktree 固定從該 SHA 建立，不使用 local `HEAD`
 - checkout `realpath` 未逃出 workspace root
 - 目標是 Git worktree
 - `origin` 的 owner/repository 與 allowlist 完全一致

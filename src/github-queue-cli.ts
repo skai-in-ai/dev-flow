@@ -4,7 +4,7 @@ import { GhCliAdapter, pollOnce, queueConfig, type DraftPullRequest, type GitHub
 class FakeAdapter implements GitHubAdapter {
   constructor(private readonly issues: QueueIssue[]) {}
   async listReadyIssues(): Promise<QueueIssue[]> { return this.issues; }
-  async claim(issue: QueueIssue): Promise<boolean> { issue.labels = issue.labels.filter((label) => label !== "dev-flow-ready"); issue.labels.push("dev-flow-running"); return true; }
+  async claim(issue: QueueIssue): Promise<{ defaultBranch: string; sha: string } | false> { issue.labels = issue.labels.filter((label) => label !== "dev-flow-ready"); issue.labels.push("dev-flow-running"); return { defaultBranch: "main", sha: "0000000000000000000000000000000000000000" }; }
   async removeLabel(issue: QueueIssue, label: string): Promise<void> { issue.labels = issue.labels.filter((item) => item !== label); }
   async addLabel(issue: QueueIssue, label: string): Promise<void> { if (!issue.labels.includes(label)) issue.labels.push(label); }
   async comment(_issue: QueueIssue, _body: string): Promise<void> {}

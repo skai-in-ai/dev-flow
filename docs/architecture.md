@@ -74,7 +74,7 @@ sequenceDiagram
 
 ```text
 ChatGPT/repo → approved Issue → human dev-flow-ready → one Mac poll
-  → atomic GitHub claim ref → ready→running label transition → allowlisted checkout/worktree
+  → atomic GitHub claim ref (validated default branch + SHA) → ready→running label transition → fetch/verify remote base → allowlisted checkout/worktree
   → existing Luna-first orchestrator → ready_for_main + tests/reviews
   → codex branch → commit/push → Draft PR → human/ChatGPT review
 ```
