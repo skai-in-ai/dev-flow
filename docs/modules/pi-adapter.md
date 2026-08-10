@@ -20,7 +20,7 @@ adapter 預設 timeout 為 15 分鐘；orchestrator 的 implementer request 明�
 
 Pi 的串流事件是**累積快照而非 delta**：一則長度 N 的訊息會被寫下 N 次「從頭到目前」的完整 message 物件，紀錄量隨訊息長度呈平方成長。實測一次 Tier 1 四輪 run，單一 implementer 的原始 stdout 有 315 MB，其中 297.7 MB 是 22,726 筆 `message_update`；同一批資訊在 184 筆 `message_end` 裡只佔 0.9 MB。
 
-因此落地前先經 `compactPiEvents()`（`src/ledger-retention.ts`）壓縮，寫成 `trace.jsonl`：
+因此 `NodePiProcessRunner` 在 stdout 串流期間逐行解析，並以 `compactPiEventLine()`（`src/ledger-retention.ts`）即時壓縮；每行 await 直接 append 到 `trace.jsonl`，由 stream consumption 提供 backpressure，不會先累積完整 stdout 再落地。adapter 仍以同一套 canonical policy 寫成 `trace.jsonl`（注入的 fake runner 若只提供 stdout，才在 close 後使用 `compactPiEvents()` 作相容 fallback）：
 
 | 處置 | 對象 |
 |:---|:---|
@@ -30,6 +30,8 @@ Pi 的串流事件是**累積快照而非 delta**：一則長度 N 的訊息會�
 | 例外保留 | `toolResults` 的 `toolName` 與 `isError` —— 叫了哪些工具、有沒有失敗是結構不是內容 |
 
 保留判準是「未來要分析什麼」：跑了幾個 turn、叫了哪些工具幾次、花多少 token、為什麼停。完整內容看 run 根目錄的 `decisions.json`、`cycle-<n>.diff`、`cycle-<n>-tests.json`，那些才是分析素材。
+
+執行期保留有界：預設單一未完成 JSONL line 上限 4 MiB、stderr tail 上限 64 KiB、compact trace 上限 4 MiB；最後 assistant text 超過 1 MiB 會 fail-closed；可注入 `NodePiProcessRunner` limits 做測試。超長無換行 record 會 fail-closed 終止該 run；stderr 超限保留最後 64 KiB，並附 `[stderr truncated; showing last 65536 bytes]` 標記；trace 超限只在剩餘空間足夠時附 `trace_truncated` 事件，實際檔案絕不超過上限。assistant summary 與最後 usage 只保留必要的最新狀態，不保存完整 event array。這些是 stream-time bound，與既有 ledger 的 post-run `compactPiEvents()` 清理不同；後者只處理既有磁碟資料，不能回收執行期間已配置的 stdout 記憶體。
 
 adapter 同時移除 Pi 自己寫在 session 目錄的對話紀錄（每個角色約 1 MB，內容與 trace 重疊），best-effort，清不掉不影響執行。
 
