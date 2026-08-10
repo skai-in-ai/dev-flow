@@ -581,6 +581,29 @@ export async function pendingResume(adapter: GitHubAdapter, issue: QueueIssue): 
   return decision ? { previousAttempt: previous.attempt, decision, author: candidate.author } : undefined;
 }
 
+export async function postNeedsHumanReport(
+  adapter: GitHubAdapter,
+  issue: QueueIssue,
+  body: string,
+  resumable: boolean,
+  record: (name: string, value: unknown) => Promise<unknown>,
+): Promise<void> {
+  try {
+    await adapter.comment(issue, body);
+  } catch (reportError) {
+    if (resumable) {
+      try {
+        await adapter.removeLabel(issue, "dev-flow-resume");
+      } catch (removeError) {
+        const detail = `needs-human 報告貼出失敗：${reportError instanceof Error ? reportError.message : String(reportError)}；dev-flow-resume 移除失敗：${removeError instanceof Error ? removeError.message : String(removeError)}`;
+        await record("writeback-error.txt", detail);
+        throw new Error(detail);
+      }
+    }
+    throw reportError;
+  }
+}
+
 export async function pollOnce(adapter: GitHubAdapter, config: QueueConfig): Promise<{ status: "idle" | "dry_run" | "success" | "failed"; issue?: QueueIssue; error?: string }> {
   await mkdir(config.ledgerRoot, { recursive: true });
   const lockPath = join(config.workspaceRoot, ".orchestrator", "queue-poll.lock");
@@ -738,7 +761,7 @@ export async function pollOnce(adapter: GitHubAdapter, config: QueueConfig): Pro
         branch: tree?.branch ?? pushedBranch?.branch ?? `codex/issue-${issue.number}-${slug(issue.title) || "task"}（本次未驗證，可能不存在）`,
         resumable,
       });
-      await adapter.comment(issue, report);
+      await postNeedsHumanReport(adapter, issue, report, resumable, record);
     } catch (writebackError) { await record("writeback-error.txt", String(writebackError)); return { status: "failed", issue, error: `${failure}; issue writeback failed` }; }
     return { status: "failed", issue, error: failure };
     }
