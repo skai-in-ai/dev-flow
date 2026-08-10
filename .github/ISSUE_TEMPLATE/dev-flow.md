@@ -33,7 +33,18 @@ none
 <!-- dev-flow-required: replace this placeholder with deterministic, observable outcomes. -->
 
 ## Tests
-<!-- dev-flow-required: replace this placeholder with raw, trusted shell command bullets. -->
+<!-- dev-flow-required: replace this placeholder with raw, trusted shell command bullets.
+
+     These commands run twice: once on the untouched baseline before any work starts, and
+     again after the change. They run in a fresh worktree created from the default branch,
+     with no dependencies installed and no gitignored files such as .env, so:
+
+     - Include the install step. Write `npm ci && npm test`, not `npm test`. For a repository
+       with several service directories, write `cd <service> && uv run pytest`.
+     - Do not name a file that this task is going to create. The baseline run happens before
+       the file exists, so the task can never start.
+     - The commands must not depend on secrets or local state. A test that only passes because
+       your machine has a real .env will fail here and stop the task before any work begins. -->
 
 ## Risks
 <!-- dev-flow-required: replace this placeholder with risks, or write `none`. -->

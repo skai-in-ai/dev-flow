@@ -26,7 +26,7 @@ none
 - A deterministic, observable outcome
 
 ## Tests
-- npm test
+- npm ci && npm test
 
 ## Risks
 - Describe risks or write `none`
