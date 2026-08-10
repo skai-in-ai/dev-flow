@@ -85,3 +85,7 @@ bin/dev-flow --max-tier 2
 - Pi 事件在落地前一律經 `compactPiEvents()`。原始 stdout 的 `message_update` 是累積快照而非 delta，直接保存會隨模型輸出長度呈平方成長（實測單一 implementer 315 MB）。清理工具與落地路徑共用同一個函式，不得各寫一套。
 - 任何提前結束的路徑都必須經過 `finish()`；runtime exception 也要先落地成 `failed` summary 再往外拋。
 - 兩張流程圖各有分工，不要合併也不要互相複製：改分支條件或終局動 `docs/modules/orchestration.md` 的 flowchart，改 artifact 或角色動 `docs/architecture.md` 的 sequenceDiagram。
+- **確定性檢查一律排在最貴的步驟之前。** 新增任何「發布時才會用到」的限制（欄位長度、格式、前提狀態）時，同時把它加進 claim 後、呼叫 agent 前的前置檢查。否則失敗會發生在整輪工作跑完、付完錢之後（實例：resume 決策 597 字元超過 512 上限，在 `ready_for_main` 之後才於組 PR body 時炸掉）。preflight 對測試已經是這個形狀，新限制要跟上。
+- **label 不得承諾系統兌現不了的狀態。** `dev-flow-resume` 表示系統可以接手，`dev-flow-running` 表示正在執行。任何會讓 label 與實際能力脫節的路徑都要有收斂：寫入失敗走 catch block 補償，process 被外力終止則必須在下一輪 poll 判斷（catch block 那時根本不會執行）。這兩類要分開想，同一套補償救不了兩者。
+- **liveness 與授權判斷只信本機 ledger，不信 GitHub 任何欄位。** Issue body、title、comment 都是不可信輸入；以它們判斷「某個 worker 是否還活著」等於讓任何有留言權限的人回收別人執行中的工作。
+- **新增的 gate 必須通得過乾淨 checkout。** worktree 沒有 `node_modules`、沒有 `.env`。測試指令寫成自帶安裝步驟（`npm ci && npm test`），不要假設環境已就緒。
