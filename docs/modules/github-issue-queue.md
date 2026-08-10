@@ -2,7 +2,7 @@
 
 本模組將 GitHub 當作 ChatGPT、人類 approval 與本機 coding agent 之間的穩定交接層。它是核心 orchestrator 外的可選 wrapper，不改變 Luna-first routing、deterministic tests 或 isolated review。
 
-## 入口 B 完整流程
+## 入口 A 完整流程
 
 ```text
 人在 ChatGPT 討論需求
@@ -25,18 +25,18 @@
 - Core orchestrator 仍只負責 implementation/tests/review，本身仍停在 `ready_for_main`。
 - Draft PR 是自動化交付邊界；不自動 merge 或 deploy。
 
-這是 README 所稱的**入口 B**。若你正在同一個 Pi／Remote Pi session 討論，成功後只需要 working-tree diff，不需要 Issue queue 或 Draft PR，應使用**入口 A**的 `/dev-flow`；見 [手機與 Pi 入口](mobile-entrypoint.md)。
+這是 README 所稱的**入口 A**。若你正在同一個 Pi／Remote Pi session 討論，成功後只需要 working-tree diff，不需要 Issue queue 或 Draft PR，應使用**入口 B**的 `/dev-flow`；見 [手機與 Pi 入口](mobile-entrypoint.md)。
 
 ## 使用時機
 
-使用入口 B 的情況：
+使用入口 A 的情況：
 
 - 從手機或外部 ChatGPT 建立 durable task handoff。
 - 多個任務要由本機 worker 排隊處理。
 - 需要每個任務使用 isolated worktree／branch。
 - 希望完整 gates 通過後自動得到 Draft PR。
 
-不要為了單次、正在互動的本機修改繞 GitHub 一圈；那種情況使用入口 A 即可。
+不要為了單次、正在互動的本機修改繞 GitHub 一圈；那種情況使用入口 B 即可。
 
 ## Issue contract
 

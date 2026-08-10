@@ -29,49 +29,24 @@ Agent Orchestrator 將主討論 session 的結論保存為結構化 spec，再�
 
 ## 兩條入口
 
-兩條入口共用同一個 core orchestrator，但不能混為同一條操作流程。
+兩條入口共用 core orchestrator，但交付邊界不同，不能混為同一條操作流程。
 
-### 入口 A：Pi／Remote Pi／CLI → working tree
+### 入口 A：GitHub Issue queue → isolated worktree → Draft PR
 
-```text
-同一個 Pi session 討論
-  → /dev-flow 整理並保存 spec
-  ├─ 資訊不足：draft / needs_clarification → 回 session 補充
-  └─ approved：自動啟動 core orchestrator
-       → ready_for_main：變更留在目前 working tree
-       └─ needs_human：由目前 session 接手
-```
+適合從手機或外部 ChatGPT 交辦、多任務排隊，並希望最後在 GitHub 收 Draft PR。Issue 需為 approved spec 並加上 `dev-flow-ready`；worker 在隔離 worktree 執行同一批 gates，成功後才 commit、push、建立 Draft PR。`needs_human` 則保留 worktree，經授權的 `dev-flow-resume` 決策可從原現場續跑。它不 merge、不 deploy；完整流程見 [GitHub Issue queue](modules/github-issue-queue.md)。
 
-已有 approved spec 時用 `/dev` 或 `bin/dev-flow`；已有 handoff 時用 CLI `--handoff`。入口 A 不 commit、不 push、不建立 PR。
+### 入口 B：Pi／Remote Pi／CLI → working tree
 
-### 入口 B：GitHub Issue → isolated worktree → Draft PR
+適合正在同一個 Pi session 討論並立刻開發。`/dev-flow` 整理討論成 spec，approved 時啟動流程；完成後變更停在目前 working tree。它不 commit、push、建立 PR、merge 或 deploy；操作方式見 [手機與 Pi 入口](modules/mobile-entrypoint.md)。
+
+## 目前流程
 
 ```text
-建立符合 contract 的 GitHub Issue
-  → status: approved + dev-flow-ready
-  → worker claim
-  → claimed remote SHA 建立 isolated worktree
-  → core orchestrator
-  ├─ ready_for_main：worker commit / push / 建立 Draft PR
-  └─ needs_human：Issue 留報告並保留 worktree，可授權 resume
-```
-
-入口 B 會發布 Draft PR，但不 merge、不 deploy。
-
-### 使用時機
-
-| 需求 | 入口 |
-|:---|:---|
-| 目前 Pi 對話已收斂，想立刻開發 | A |
-| 已有本機 approved spec 或 handoff | A |
-| 從手機／外部 ChatGPT 交辦並以 GitHub 接收 | B |
-| 多任務排隊、需要隔離 branch 與 Draft PR | B |
-| 需求仍在探索或沒有 meaningful tests | 先不要進 orchestrator |
-
-## 共用核心流程
-
-```text
-approved spec / handoff
+討論
+  → /dev-flow
+  → 完整：approved spec（.agent/specs/）→ 自動啟動
+  → 不完整：draft / needs_clarification → 繼續討論後再 /dev-flow
+  → handoff
   → baseline 測試預檢（不過就拒絕啟動，零成本）
   → deterministic floor + Luna Medium risk classifier
   → Luna-first isolated implementer
@@ -87,7 +62,7 @@ approved spec / handoff
 
 最多允許三次修正（共四次實作）。單純升級 tier 與 `needs_spec` 都不消耗 cycle，也不會自動重做已完成的 implementation；流程會先用較強 reviewer 重新檢查。implementer 的模型只看 cycle：首次 Luna Medium、兩次修正 Luna High、第三次修正才升 Terra Medium。tier 只決定 reviewer：T1 為 Luna High，T2 為 Terra Medium 加 Sol Medium final。**tier 上限預設為 1**，`--max-tier 2` 才會用到 Terra 與 Sol。相同失敗連續兩個 cycle 會提前熔斷。
 
-## 入口 A 的操作方式
+## 入口 B 操作方式
 
 ### CLI
 
@@ -127,7 +102,7 @@ npm run orchestrate -- --handoff /absolute/path/handoff.json
 | 人工 approval UI | handoff 有欄位，但 MVP 僅停在 `ready_for_main` |
 | Provider-agnostic adapter | contract 已抽象化；目前只有 Pi process adapter |
 
-## 入口 B：GitHub Issue queue
+## 入口 A：GitHub Issue queue
 
 `bin/dev-flow-worker` 是單次 poll worker，每輪最多 claim 一個 Issue：帶 `dev-flow-ready` 的初次 Issue，或帶 `dev-flow-resume` 且已有授權決策的原 Issue。Issue 必須符合 `examples/github-issue-template.md` 的 approved spec 契約；人工 label 是 approval 邊界，但不是 sandbox。Worker 只接受設定 allowlist 的 owner/repository，從 workspace root 下已存在 checkout 建立獨立 worktree 與 `codex/issue-<number>-<slug>` branch。既有 orchestrator 的 Luna-first cycle matrix 與 max-tier cap 不變；只有 `ready_for_main` 和 deterministic gates 全通過才 commit、push、建立 Draft PR。
 

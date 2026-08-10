@@ -1,4 +1,4 @@
-# Agent Orchestrator
+# dev-flow
 
 一套以 **LLM-as-a-Judge** 為核心的自動化開發流程：把 approved spec 交給隔離的 implementer、deterministic tests 與 reviewer，自動完成實作、審查、修正與結果整理。
 
@@ -8,27 +8,7 @@
 
 兩條入口共用同一套 core orchestrator，但任務來源與成功後的交付不同。
 
-### 入口 A：Pi／Remote Pi／CLI → working-tree diff
-
-適合你正在同一個 Pi session 討論，想把結論保存成 spec 並立刻在目前 repo 開發。
-
-```text
-Pi／Remote Pi session 討論
-  → /dev-flow
-  ├─ 資訊不足：保存 draft／needs_clarification → 回 session 補充
-  └─ 資訊完整：保存 approved spec → core orchestrator
-       ├─ ready_for_main：變更留在目前 working tree
-       └─ needs_human：回到目前 session 處理
-```
-
-- `/dev-flow`：整理目前對話；完整才自動開始。
-- `/dev`：已有 approved spec 時直接執行，不重新整理對話。
-- `bin/dev-flow`、`--spec`、`--handoff`：相同路徑的 CLI 入口。
-- 不會自動 commit、push、建立 PR、merge 或 deploy。
-
-手機與 session pointer 細節見 [手機與 Pi 入口](docs/modules/mobile-entrypoint.md)。
-
-### 入口 B：GitHub Issue queue → Draft PR
+### 入口 A：GitHub Issue queue → Draft PR
 
 適合從手機或外部 ChatGPT 交辦、多任務排隊，並希望最後只在 GitHub review 成果。
 
@@ -66,14 +46,34 @@ Pi／Remote Pi session 討論
 
 完整的 labels、claim、resume、publication 與 launchd 設定見 [GitHub Issue queue](docs/modules/github-issue-queue.md)。
 
+### 入口 B：Pi／Remote Pi／CLI → working-tree diff
+
+適合你正在同一個 Pi session 討論，想把結論保存成 spec 並立刻在目前 repo 開發。
+
+```text
+Pi／Remote Pi session 討論
+  → /dev-flow
+  ├─ 資訊不足：保存 draft／needs_clarification → 回 session 補充
+  └─ 資訊完整：保存 approved spec → core orchestrator
+       ├─ ready_for_main：變更留在目前 working tree
+       └─ needs_human：回到目前 session 處理
+```
+
+- `/dev-flow`：整理目前對話；完整才自動開始。
+- `/dev`：已有 approved spec 時直接執行，不重新整理對話。
+- `bin/dev-flow`、`--spec`、`--handoff`：相同路徑的 CLI 入口。
+- 不會自動 commit、push、建立 PR、merge 或 deploy。
+
+手機與 session pointer 細節見 [手機與 Pi 入口](docs/modules/mobile-entrypoint.md)。
+
 ## 使用哪一條
 
 | 情境 | 入口 |
 |:---|:---|
-| 正在 Pi／Remote Pi 討論，想立刻在目前 repo 開發 | A：`/dev-flow` |
-| 已有 approved spec 或 handoff | A：`/dev` 或 CLI |
-| 從手機／外部 ChatGPT 交辦，稍後只看 GitHub | B：Issue queue |
-| 多任務排隊、需要隔離 branch 與 Draft PR | B：Issue queue |
+| 從手機／外部 ChatGPT 交辦，稍後只看 GitHub | A：Issue queue |
+| 多任務排隊、需要隔離 branch 與 Draft PR | A：Issue queue |
+| 正在 Pi／Remote Pi 討論，想立刻在目前 repo 開發 | B：`/dev-flow` |
+| 已有 approved spec 或 handoff | B：`/dev` 或 CLI |
 | 新專案 0→1、需求仍在探索、沒有 meaningful tests | 先不要使用 orchestrator |
 
 ## 共用核心
@@ -116,7 +116,7 @@ npm test
 
 ## 快速開始
 
-### Pi／Remote Pi
+### 入口 B：Pi／Remote Pi／CLI
 
 將 `extensions/orchestrate.ts` 連結到 Pi workspace 的 `.pi/extensions/`，執行 `/reload`，然後在同一個 session：
 
@@ -137,7 +137,7 @@ npm test
 npm run orchestrate -- --handoff /absolute/path/to/handoff.json
 ```
 
-### GitHub Issue queue
+### 入口 A：GitHub Issue queue
 
 ```bash
 export DEV_FLOW_ALLOWED_REPOS=OWNER/REPOSITORY
@@ -156,7 +156,7 @@ GitHub **Dev-flow task** template 會從 `status: draft` 開始；填完 require
 - `scope.include/exclude` 是 prompt/review contract，沒有 deterministic path enforcement。
 - GitHub queue 以 repository allowlist、workspace containment、origin match、remote SHA 與 atomic claim 保護 worktree 建立。
 - Draft PR body 只接受 typed spec、Git 與 verification evidence；raw agent events、prompts、完整 report 與 ledger 不會發布。
-- Core orchestrator 不 commit/push；只有入口 B 的 queue wrapper 在 gates 通過後發布 branch 與 Draft PR。
+- Core orchestrator 不 commit/push；只有入口 A 的 queue wrapper 在 gates 通過後發布 branch 與 Draft PR。
 - 系統不提供 HTTP API、webhook、dashboard、自動 merge 或 deployment。
 
 完整規則見 [Testing and safety](docs/rules/testing-and-safety.md) 與 [Threat model](docs/architecture.md#isolation-邊界)。

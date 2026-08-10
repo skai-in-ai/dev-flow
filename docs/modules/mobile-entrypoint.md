@@ -2,9 +2,9 @@
 
 本文件說明已部署的 Pi extension、Remote Pi 上的使用方式與目前限制。
 
-這是 README 所稱的**入口 A**：從同一個 Pi／Remote Pi session 的討論產生 spec，成功後把變更留在目前 working tree。它不會建立 GitHub Issue 或 Draft PR。若你的目標是「從手機／外部 ChatGPT 建立排隊任務，最後在 GitHub 收 PR」，請使用**入口 B**，見 [GitHub Issue queue](github-issue-queue.md)。
+這是 README 所稱的**入口 B**：從同一個 Pi／Remote Pi session 的討論產生 spec，成功後把變更留在目前 working tree。它不會建立 GitHub Issue 或 Draft PR。若你的目標是「從手機／外部 ChatGPT 建立排隊任務，最後在 GitHub 收 PR」，請使用**入口 A**，見 [GitHub Issue queue](github-issue-queue.md)。
 
-## 入口 A 完整流程
+## 入口 B 完整流程
 
 ```text
 同一個 Pi／Remote Pi session 討論
