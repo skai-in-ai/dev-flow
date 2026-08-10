@@ -21,6 +21,7 @@
 | 修改 retry、review 或完成條件；查完整流程圖 | `docs/modules/orchestration.md` |
 | 修改 Pi invocation 或權限 | `docs/modules/pi-adapter.md` |
 | 修改手機 `/orchestrate` 入口 | `docs/modules/mobile-entrypoint.md` |
+| 評估加第二台 worker、併發與所有權問題 | `docs/multi-worker.md` |
 | 修改 GitHub Issue queue、labels、worktree 或 Draft PR 發布 | `docs/modules/github-issue-queue.md` |
 | 測試、Git 或部署操作 | `docs/rules/testing-and-safety.md` |
 
