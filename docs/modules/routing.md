@@ -26,7 +26,16 @@ Classifier 使用 Luna Medium，且以 `--no-tools` 啟動。Prompt 明確要求
 
 未指定 `--max-tier` 時預設為 **1**（`DEFAULT_MAX_TIER`）。
 
-實測依據（2026-08-03，8 個真實 run）：review 佔總支出 79%（reviewer 44%、Sol final 35%），implementer 只佔 16%。上限壓到 1 會把 reviewer 從 Terra Medium 換成 Luna High（單次約 1/3 價）並整個略過 Sol final，實測單次 run 從 $0.10~$0.21 降到約 $0.023。同批資料中 Luna High 的 findings 有嚴重度分級與 file:line 引用，看不出品質降級。
+實測依據（2026-08-03 至 2026-08-10，16 個有 per-role 成本紀錄的真實 run）：
+
+| 分組 | run 數 | 平均 | 中位數 | 範圍 | 成本組成 |
+|:---|---:|---:|---:|:---|:---|
+| tier 2 | 5 | $0.1375 | $0.1496 | $0.028~$0.214 | reviewer 59%、Sol final 23%、implementer 11%、router 8% |
+| tier 0/1 | 11 | $0.0217 | $0.0078 | $0.0028~$0.0552 | reviewer 54%、router 25%、implementer 21% |
+
+上限壓到 1 會把 reviewer 從 Terra Medium 換成 Luna High 並整個略過 Sol final。tier 1 的成本幾乎只由 cycle 數決定：一次過關的 6 個 run 落在 $0.0028~$0.0078，跑滿 4 cycle 的 3 個 run 落在 $0.051~$0.055，中間是 2 cycle $0.018、3 cycle $0.029。要再往下壓成本，該做的是讓 handoff 一次就對，不是換更便宜的模型。
+
+另有 3 個 run 在 baseline preflight 就結束，成本為 0，未計入上述統計。同批資料中 Luna High 的 findings 有嚴重度分級與 file:line 引用，看不出品質降級。
 
 Sol 曾在四次 final review 中攔下兩次 Terra 已放行的問題，所以那道網有價值。壓到 tier 1 不是放棄它，而是把它移到迴圈外：流程停在 `ready_for_main` 之後，由外層的一個 Sol Low 讀最終 diff 與 `report.md` 並提出處置，人只做關鍵裁決。同一道 gate 從「每個 cycle 審一次中間態」變成「整個 run 結束後審一次最終版」，更便宜，而且審的對象更正確。動到金流或下單時手動指定 `--max-tier 2`，把 gate 拉回迴圈內。
 

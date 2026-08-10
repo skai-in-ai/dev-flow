@@ -101,6 +101,21 @@ approved spec / handoff
 
 模型與流程細節見 [Orchestration](docs/modules/orchestration.md)、[Routing](docs/modules/routing.md) 與 [Architecture](docs/architecture.md)。
 
+## 成本
+
+以下數字取自本機 `.orchestrator/` ledger，2026-08-03 至 2026-08-10 之間 16 個有 per-role 成本紀錄的真實 run（另有 3 個在 baseline preflight 就結束、成本為 0，未計入）。
+
+| 分組 | run 數 | 平均 | 中位數 | 範圍 |
+|:---|---:|---:|---:|:---|
+| 預設 `max-tier 1` | 11 | $0.0217 | $0.0078 | $0.0028~$0.0552 |
+| `--max-tier 2` | 5 | $0.1375 | $0.1496 | $0.028~$0.214 |
+
+支出集中在 review：tier 2 的 reviewer 加 Sol final review 佔 81%，implementer 只佔 11%。tier 1 沒有 Sol final，reviewer 佔 54%、router 25%、implementer 21%。
+
+同一 tier 內的成本幾乎只由修正輪次決定：tier 1 一次過關的 6 個 run 是 $0.0028~$0.0078，跑滿 4 cycle 的 3 個 run 是 $0.051~$0.055。spec 寫得夠準比選更便宜的模型省得多。
+
+數字與 `src/models.ts` 的 `DEFAULT_MAX_TIER` 註解共用同一批量測；重新量測時兩處一起改。
+
 ## 安裝
 
 需求：Node.js、Pi Coding Agent CLI，以及可用的 Codex OAuth 登入。

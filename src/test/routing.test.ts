@@ -32,7 +32,7 @@ test("the implementer ladder follows the cycle, not the tier", () => {
 });
 
 test("the default tier cap keeps everyday runs on the cheap reviewers", () => {
-  // 實測（2026-08-03，8 個真實 run）：review 佔總支出 79%，implementer 只佔 16%。
+  // 實測（2026-08-03 至 2026-08-10，16 個真實 run）：tier 2 的 review 佔總支出 81%，implementer 只佔 11%。
   assert.equal(DEFAULT_MAX_TIER, 1);
   assert.deepEqual(modelFor(DEFAULT_MAX_TIER, "reviewer"), { model: "openai-codex/gpt-5.6-luna", reasoning: "high" });
   // 上限 1 時 implementer 永遠不升到 Terra，否則設的成本天花板等於沒設。

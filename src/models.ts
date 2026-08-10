@@ -5,9 +5,14 @@ const codex = (name: string, reasoning: ModelSelection["reasoning"]): ModelSelec
 /**
  * 未指定 `--max-tier` 時的預設上限。
  *
- * 實測依據（2026-08-03，8 個真實 run）：review 佔總支出 79%（reviewer 44%、Sol final 35%），
- * implementer 只佔 16%。把上限壓到 1 會把 reviewer 從 Terra Medium 換成 Luna High
- * （單次約 1/3 價），並整個略過 Sol final，實測單次 run 從 $0.10~$0.21 降到約 $0.023。
+ * 實測依據（2026-08-03 至 2026-08-10，16 個有 per-role 成本紀錄的真實 run）：
+ * 5 個 tier 2 run 平均 $0.1375（$0.028~$0.214），review 佔 81%（reviewer 59%、Sol final 23%），
+ * implementer 只佔 11%。11 個 tier 0/1 run 平均 $0.0217、中位數 $0.0078（$0.0028~$0.0552），
+ * reviewer 54%、router 25%、implementer 21%。
+ *
+ * 把上限壓到 1 會把 reviewer 從 Terra Medium 換成 Luna High，並整個略過 Sol final。
+ * tier 1 的成本幾乎只由 cycle 數決定：一次過關的 6 個 run 是 $0.0028~$0.0078，
+ * 跑滿 4 cycle 的 3 個 run 是 $0.051~$0.055。也就是說貴的不是模型，是修正輪次。
  * 同批資料裡 Luna High 的 findings 有嚴重度分級與 file:line 引用，看不出品質降級。
  *
  * 這不等於放棄 Sol 那道網，而是把它移到更划算的位置：流程停在 `ready_for_main` 之後，
