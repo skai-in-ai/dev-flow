@@ -7,7 +7,7 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { specToHandoff } from "../spec.js";
-import { acquirePollLock, claimRef, reclaimWorktree, draftPullRequestBody, MAX_DRAFT_PR_BODY_BYTES, nextAttempt, orderQueue, parseIssueSpec, parseResumeDecision, pendingResume, publicationFiles, queueConfig, renderNeedsHumanReport, validateRetainedWorktree, worktree, worktreePath, type GitHubAdapter, type QueueClaim, type QueueComment, type QueueIssue } from "../github-queue.js";
+import { acquirePollLock, claimRef, reclaimWorktree, draftPullRequestBody, MAX_DRAFT_PR_BODY_BYTES, nextAttempt, orderQueue, parseIssueSpec, parseResumeDecision, pendingResume, postNeedsHumanReport, publicationFiles, queueConfig, renderNeedsHumanReport, validateRetainedWorktree, worktree, worktreePath, type GitHubAdapter, type QueueClaim, type QueueComment, type QueueIssue } from "../github-queue.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -158,14 +158,16 @@ class FakeAdapter implements GitHubAdapter {
   readonly labelsAdded: string[] = [];
   readonly labelsRemoved: string[] = [];
   readonly claims: number[] = [];
+  commentFailure: Error | undefined;
+  removeLabelFailure: Error | undefined;
   constructor(private readonly issues: QueueIssue[], private readonly writers: readonly string[] = ["maintainer"]) {}
   async listReadyIssues(): Promise<QueueIssue[]> { return this.issues; }
   async listComments(): Promise<QueueComment[]> { return this.comments; }
   async isAuthorized(_issue: QueueIssue, author: string): Promise<boolean> { return this.writers.includes(author); }
   async claim(_issue: QueueIssue, attempt = 1): Promise<QueueClaim | false> { this.claims.push(attempt); return { defaultBranch: "main", sha: "a".repeat(40), attempt }; }
-  async removeLabel(_issue: QueueIssue, label: string): Promise<void> { this.labelsRemoved.push(label); }
+  async removeLabel(_issue: QueueIssue, label: string): Promise<void> { if (this.removeLabelFailure) throw this.removeLabelFailure; this.labelsRemoved.push(label); }
   async addLabel(_issue: QueueIssue, label: string): Promise<void> { this.labelsAdded.push(label); }
-  async comment(_issue: QueueIssue, body: string): Promise<void> { this.posted.push(body); }
+  async comment(_issue: QueueIssue, body: string): Promise<void> { if (this.commentFailure) throw this.commentFailure; this.posted.push(body); }
   async createDraftPullRequest(): Promise<{ url: string }> { throw new Error("not reachable in these tests"); }
 }
 
@@ -194,6 +196,32 @@ test("a resume Issue is not actionable until an authorized, fresh decision exist
   // Publication is terminal: a Draft PR comment closes the Issue to further resumes.
   adapter.comments.push({ id: 5, author: "worker", body: "Draft PR 已建立：https://github.com/owner/repo/pull/7", createdAt: "2026-08-05T00:00:00Z" });
   assert.equal(await pendingResume(adapter, target), undefined, "an Issue with a published PR must not resume");
+});
+
+test("a failed needs-human report removes the resumable label", async () => {
+  const adapter = new FakeAdapter([resumeIssue()]);
+  adapter.commentFailure = new Error("rate limit");
+  const recorded: string[] = [];
+  const record = async (name: string, _value: unknown): Promise<unknown> => { recorded.push(name); return undefined; };
+
+  await assert.rejects(
+    () => postNeedsHumanReport(adapter, resumeIssue(), "report", true, record),
+    /rate limit/,
+  );
+  assert.deepEqual(adapter.labelsRemoved, ["dev-flow-resume"]);
+  assert.deepEqual(recorded, []);
+
+  adapter.removeLabelFailure = new Error("permission denied");
+  await assert.rejects(
+    () => postNeedsHumanReport(adapter, resumeIssue(), "report", true, record),
+    /permission denied/,
+  );
+  assert.deepEqual(recorded, ["writeback-error.txt"]);
+
+  const successful = new FakeAdapter([resumeIssue()]);
+  await postNeedsHumanReport(successful, resumeIssue(), "report", true, async () => {});
+  assert.deepEqual(successful.labelsRemoved, []);
+  assert.deepEqual(successful.posted, ["report"]);
 });
 
 test("a resume Issue waiting on its human is skipped, and never written to", async () => {

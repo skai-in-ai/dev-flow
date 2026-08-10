@@ -193,6 +193,7 @@ PR delivery boundary：PR renderer 沒有 arbitrary report、raw event、agent s
 - Orchestrator 非 `ready_for_main`：不 push，Issue 轉 needs-human。只有在實作或 review 已產生要保留的變更、且需要人工修正時，才走下述 checkpoint bridge。
 - Push 前 runtime failure：不會有遠端 publication。
 - Push 後 PR/writeback failure：嘗試刪除 remote branch；刪除失敗時將錯誤寫入 ledger 並明確回報 needs-human。
+- needs-human 報告貼出失敗時，會移除 `dev-flow-resume`，只保留 `dev-flow-needs-human`，避免沒有報告可供驗證時看似能 resume；若移除也失敗，錯誤會寫入 job ledger，poll 仍回傳 failed 而不拋出例外。
 - 所有 Issue writeback failure 都以非零結束，不靜默假裝成功。
 
 對於已保留實作或 review 變更的 needs-human report，recovery 是：確認 retained worktree provenance，由具 repository 寫入權限的協作者新增 `dev-flow-resume` 與新的 `/dev-flow resume narrow fix <說明>` comment；下一個 attempt 重用同一 worktree，不會自動 commit、push 或 discard。provenance 驗不過就 fail closed，停在 needs-human 並附繁體中文診斷。
