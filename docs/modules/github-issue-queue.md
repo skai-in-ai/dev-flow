@@ -104,6 +104,8 @@ Claim ref 建在該 Issue 所屬 repository 底下，名稱含 Issue number 與 
 
 授權判斷用 `repos/{owner}/{repo}/collaborators/{user}/permission`：以 `user.permissions.push` 這個 boolean 為準，字串 `permission` 只接受 `write`／`maintain`／`admin`。GitHub 這個字串欄位不會回傳 `push`，拿 `push` 去比會把一般 write 協作者全部誤拒。
 
+Comment 的 `id` 也有同類陷阱：`gh issue view --json comments` 回的是 GraphQL node ID 字串（`IC_kwDO…`），不是 REST 的整數。決策的身分檢查因此接受非空字串或整數；只認整數會讓每一則真實 resume 指令都被判為不合法，`pendingResume` 永遠回 `undefined`，Issue 停在 needs-human 而 worker 每輪都回 `idle`——不會報錯，只是靜默不動。
+
 帶 `dev-flow-resume` 但還沒有可執行決策的 Issue（沒有新 comment、決策過期、格式不合、留言者無寫入權限），會在**選取階段就被跳過**：不 claim、不留言、不改 label，只在本機 ledger 記一筆，並讓 poll 繼續往後找下一個可執行的 Issue。這一點是刻意的：等人回覆可能等好幾天，若每輪都貼一則報告，Issue 會每 300 秒被灌一則留言，而且因為它在 FIFO 最前面，後面排隊的 Issue 會被永久餓死。同樣地，不回應未授權的留言，也避免任何有留言權限的人驅動無上限的 Issue 寫入。
 
 有了合法決策之後才會 claim。此後的失敗（provenance 遺失或損壞、worktree 有無法解釋的變動、attempt 對不上）會貼出**一則**needs-human 報告；因為決策必須晚於最新報告，這則新報告會讓剛才那個決策失效，Issue 回到等待狀態，不會反覆重試。這種在 claim 前就失敗的情況會一併移除 `dev-flow-resume`，由人連同新決策一起重新加上。
