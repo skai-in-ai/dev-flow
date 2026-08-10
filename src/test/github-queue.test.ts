@@ -7,7 +7,7 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { specToHandoff } from "../spec.js";
-import { acquirePollLock, claimRef, reclaimWorktree, draftPullRequestBody, MAX_DRAFT_PR_BODY_BYTES, nextAttempt, orderQueue, parseIssueSpec, parseResumeDecision, pendingResume, postNeedsHumanReport, publicationFiles, queueConfig, renderNeedsHumanReport, validateRetainedWorktree, worktree, worktreePath, type GitHubAdapter, type QueueClaim, type QueueComment, type QueueIssue } from "../github-queue.js";
+import { acquirePollLock, claimRef, reclaimWorktree, draftPullRequestBody, MAX_DRAFT_PR_BODY_BYTES, MAX_DELIVERY_LIST_ITEM_LENGTH, nextAttempt, orderQueue, parseIssueSpec, parseResumeDecision, pendingResume, postNeedsHumanReport, publicationFiles, queueConfig, renderNeedsHumanReport, validateRetainedWorktree, validateResumeDeliveryPreconditions, worktree, worktreePath, type GitHubAdapter, type QueueClaim, type QueueComment, type QueueIssue } from "../github-queue.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -377,6 +377,110 @@ test("retained provenance is bound to the expected Issue worktree path, branch, 
     // Anything the previous attempt did not record is unexplained state; it must fail closed.
     await writeFile(join(expected, "stray.txt"), "unexplained\n");
     await assert.rejects(() => validateRetainedWorktree(provenance, issue(valid), expected, provenance.branch), /未記錄的變動/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("resume delivery preconditions reject oversized decisions and readonly merge conflicts", async () => {
+  const root = await mkdtemp("/tmp/dev-flow-resume-preflight-");
+  try {
+    await execFileAsync("git", ["init", root]);
+    await execFileAsync("git", ["config", "user.email", "test@example.invalid"], { cwd: root });
+    await execFileAsync("git", ["config", "user.name", "Test"], { cwd: root });
+    await writeFile(join(root, "file.txt"), "base\\n");
+    await execFileAsync("git", ["add", "file.txt"], { cwd: root }); await execFileAsync("git", ["commit", "-m", "base"], { cwd: root });
+    const commonBase = (await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: root })).stdout.trim();
+    await execFileAsync("git", ["checkout", "-b", "default"], { cwd: root });
+    await writeFile(join(root, "file.txt"), "default\\n"); await execFileAsync("git", ["commit", "-am", "default"], { cwd: root });
+    const defaultSha = (await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: root })).stdout.trim();
+    await execFileAsync("git", ["checkout", "-b", "retained", commonBase], { cwd: root });
+    const baselineSha = (await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: root })).stdout.trim();
+    await writeFile(join(root, "file.txt"), "retained\\n");
+    const beforeStatus = (await execFileAsync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: root })).stdout;
+    const retained = { repository: "owner/repo", issueNumber: 12, branch: "codex/issue-12-safe-task", cwd: root, baselineSha, status: beforeStatus.trim(), recordedAt: new Date().toISOString() };
+    const claim = { defaultBranch: "main", sha: defaultSha };
+    const beforeHead = baselineSha;
+    await assert.rejects(() => validateResumeDeliveryPreconditions(root, claim, retained, "narrow fix"), /落後 1 個 commit.*file\.txt/);
+    assert.equal((await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: root })).stdout.trim(), beforeHead);
+    assert.equal((await execFileAsync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: root })).stdout, beforeStatus);
+    await assert.rejects(() => validateResumeDeliveryPreconditions(root, { ...claim, sha: baselineSha }, retained, "x".repeat(MAX_DELIVERY_LIST_ITEM_LENGTH + 1)), /長度 513 超過上限 512/);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("resume delivery preconditions preserve staged-only retained changes when checking conflicts", async () => {
+  const root = await mkdtemp("/tmp/dev-flow-resume-staged-conflict-");
+  try {
+    await execFileAsync("git", ["init", root]);
+    await execFileAsync("git", ["config", "user.email", "test@example.invalid"], { cwd: root }); await execFileAsync("git", ["config", "user.name", "Test"], { cwd: root });
+    await writeFile(join(root, "file.txt"), "base\\n"); await execFileAsync("git", ["add", "file.txt"], { cwd: root }); await execFileAsync("git", ["commit", "-m", "base"], { cwd: root });
+    const commonBase = (await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: root })).stdout.trim();
+    await execFileAsync("git", ["checkout", "-b", "default"], { cwd: root });
+    await writeFile(join(root, "file.txt"), "default\\n"); await execFileAsync("git", ["commit", "-am", "default"], { cwd: root });
+    const claimSha = (await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: root })).stdout.trim();
+    await execFileAsync("git", ["checkout", "-b", "retained", commonBase], { cwd: root });
+    await writeFile(join(root, "file.txt"), "retained\\n"); await execFileAsync("git", ["add", "file.txt"], { cwd: root });
+    await writeFile(join(root, "file.txt"), "base\\n");
+    const baselineSha = (await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: root })).stdout.trim();
+    const beforeHead = (await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: root })).stdout.trim();
+    const beforeStatus = (await execFileAsync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: root })).stdout;
+    const retained = { repository: "owner/repo", issueNumber: 12, branch: "codex/issue-12-safe-task", cwd: root, baselineSha, status: beforeStatus.trim(), recordedAt: new Date().toISOString() };
+    await assert.rejects(() => validateResumeDeliveryPreconditions(root, { defaultBranch: "main", sha: claimSha }, retained, "narrow fix"), /落後 1 個 commit.*file\.txt/);
+    assert.equal((await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: root })).stdout.trim(), beforeHead);
+    assert.equal((await execFileAsync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: root })).stdout, beforeStatus);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("resume delivery preconditions reject divergent non-conflicting histories", async () => {
+  const root = await mkdtemp("/tmp/dev-flow-resume-divergent-");
+  try {
+    await execFileAsync("git", ["init", root]);
+    await execFileAsync("git", ["config", "user.email", "test@example.invalid"], { cwd: root }); await execFileAsync("git", ["config", "user.name", "Test"], { cwd: root });
+    await writeFile(join(root, "base.txt"), "base\\n"); await execFileAsync("git", ["add", "base.txt"], { cwd: root }); await execFileAsync("git", ["commit", "-m", "base"], { cwd: root });
+    const commonBase = (await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: root })).stdout.trim();
+    await execFileAsync("git", ["checkout", "-b", "default"], { cwd: root });
+    await writeFile(join(root, "default.txt"), "default\\n"); await execFileAsync("git", ["add", "default.txt"], { cwd: root }); await execFileAsync("git", ["commit", "-m", "default"], { cwd: root });
+    const claimSha = (await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: root })).stdout.trim();
+    await execFileAsync("git", ["checkout", "-b", "retained", commonBase], { cwd: root });
+    await writeFile(join(root, "retained.txt"), "retained\\n"); await execFileAsync("git", ["add", "retained.txt"], { cwd: root }); await execFileAsync("git", ["commit", "-m", "retained"], { cwd: root });
+    const baselineSha = (await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: root })).stdout.trim();
+    const beforeStatus = (await execFileAsync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: root })).stdout;
+    await assert.rejects(() => validateResumeDeliveryPreconditions(root, { defaultBranch: "main", sha: claimSha }, { repository: "owner/repo", issueNumber: 12, branch: "codex/issue-12-safe-task", cwd: root, baselineSha, status: "", recordedAt: new Date().toISOString() }, "narrow fix"), /不是 claim default branch SHA 的 ancestor.*fast-forward/);
+    assert.equal((await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: root })).stdout.trim(), baselineSha);
+    assert.equal((await execFileAsync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: root })).stdout, beforeStatus);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("resume delivery preconditions allow a non-conflicting default branch advance", async () => {
+  const root = await mkdtemp("/tmp/dev-flow-resume-mergeable-");
+  try {
+    await execFileAsync("git", ["init", root]);
+    await execFileAsync("git", ["config", "user.email", "test@example.invalid"], { cwd: root }); await execFileAsync("git", ["config", "user.name", "Test"], { cwd: root });
+    await writeFile(join(root, "base.txt"), "base\\n"); await execFileAsync("git", ["add", "base.txt"], { cwd: root }); await execFileAsync("git", ["commit", "-m", "base"], { cwd: root });
+    const baselineSha = (await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: root })).stdout.trim();
+    await writeFile(join(root, "new.txt"), "new\\n"); await execFileAsync("git", ["add", "new.txt"], { cwd: root }); await execFileAsync("git", ["commit", "-m", "advance"], { cwd: root });
+    const claimSha = (await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: root })).stdout.trim();
+    await validateResumeDeliveryPreconditions(root, { defaultBranch: "main", sha: claimSha }, { repository: "owner/repo", issueNumber: 12, branch: "codex/issue-12-safe-task", cwd: root, baselineSha, status: "", recordedAt: new Date().toISOString() }, "narrow fix");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("resume delivery preconditions fetch a claimed SHA missing from the local checkout", async () => {
+  const root = await mkdtemp("/tmp/dev-flow-resume-fetch-");
+  try {
+    const remote = join(root, "remote.git"); const seed = join(root, "seed"); const repo = join(root, "repo");
+    await execFileAsync("git", ["init", "--bare", remote]); await execFileAsync("git", ["init", seed]);
+    await execFileAsync("git", ["config", "user.email", "test@example.invalid"], { cwd: seed }); await execFileAsync("git", ["config", "user.name", "Test"], { cwd: seed });
+    await writeFile(join(seed, "base.txt"), "base\\n"); await execFileAsync("git", ["add", "base.txt"], { cwd: seed }); await execFileAsync("git", ["commit", "-m", "base"], { cwd: seed });
+    await execFileAsync("git", ["branch", "-M", "main"], { cwd: seed }); await execFileAsync("git", ["remote", "add", "origin", remote], { cwd: seed }); await execFileAsync("git", ["push", "origin", "main"], { cwd: seed });
+    await execFileAsync("git", ["clone", "--branch", "main", remote, repo]);
+    const baselineSha = (await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: repo })).stdout.trim();
+    await writeFile(join(seed, "new.txt"), "new\\n"); await execFileAsync("git", ["add", "new.txt"], { cwd: seed }); await execFileAsync("git", ["commit", "-m", "advance"], { cwd: seed }); await execFileAsync("git", ["push", "origin", "main"], { cwd: seed });
+    const claimSha = (await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: seed })).stdout.trim();
+    const locallyAvailable = await execFileAsync("git", ["cat-file", "-e", `${claimSha}^{commit}`], { cwd: repo }).then(() => true).catch(() => false);
+    assert.equal(locallyAvailable, false);
+    const retained = { repository: "owner/repo", issueNumber: 12, branch: "codex/issue-12-safe-task", cwd: repo, baselineSha, status: "", recordedAt: new Date().toISOString() };
+    await validateResumeDeliveryPreconditions(repo, { defaultBranch: "main", sha: claimSha }, retained, "narrow fix");
+    assert.equal((await execFileAsync("git", ["cat-file", "-e", `${claimSha}^{commit}`], { cwd: repo })).stdout, "");
+    assert.equal((await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: repo })).stdout.trim(), baselineSha);
+    assert.equal((await execFileAsync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: repo })).stdout, "");
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
