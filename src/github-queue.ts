@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
-import { cp, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
-import { hostname } from "node:os";
+import { cp, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
+import { hostname, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
@@ -272,6 +272,46 @@ async function repoPath(config: QueueConfig, repository: string): Promise<string
   return path;
 }
 async function git(cwd: string, args: string[]): Promise<string> { return (await execFileAsync("git", args, { cwd, maxBuffer: 4 * 1024 * 1024 })).stdout; }
+
+export async function validateResumeDeliveryPreconditions(
+  repo: string,
+  claim: QueueClaim,
+  retained: RetainedWorktreeProvenance,
+  decision: string,
+): Promise<void> {
+  if (decision.length > MAX_DELIVERY_LIST_ITEM_LENGTH) {
+    throw new Error(`resume 授權決策長度 ${decision.length} 超過上限 ${MAX_DELIVERY_LIST_ITEM_LENGTH}`);
+  }
+  if (retained.baselineSha.toLowerCase() === claim.sha.toLowerCase()) return;
+
+  const claimExists = await execFileAsync("git", ["cat-file", "-e", `${claim.sha}^{commit}`], { cwd: repo }).then(() => true).catch(() => false);
+  if (!claimExists) await git(repo, ["fetch", "origin", claim.sha]);
+  const baselineIsAncestor = await execFileAsync("git", ["merge-base", "--is-ancestor", retained.baselineSha, claim.sha], { cwd: repo }).then(() => true).catch(() => false);
+  if (!baselineIsAncestor) throw new Error("retained worktree baseline 不是 claim default branch SHA 的 ancestor，歷史不是 fast-forward，請人工處理");
+  const mergeBase = (await git(repo, ["merge-base", retained.baselineSha, claim.sha])).trim();
+  const commitCount = Number((await git(repo, ["rev-list", "--count", `${retained.baselineSha}..${claim.sha}`])).trim());
+  const indexDir = await mkdtemp(join(tmpdir(), "dev-flow-merge-index-"));
+  const retainedIndexPath = join(indexDir, "retained-index");
+  const mergeIndexPath = join(indexDir, "merge-index");
+  try {
+    const actualIndexPath = (await git(retained.cwd, ["rev-parse", "--git-path", "index"])).trim();
+    await cp(isAbsolute(actualIndexPath) ? actualIndexPath : resolve(retained.cwd, actualIndexPath), retainedIndexPath);
+    const worktreePaths = [
+      ...(await execFileAsync("git", ["diff", "--name-only", "-z", retained.baselineSha], { cwd: retained.cwd })).stdout.split("\0"),
+      ...(await execFileAsync("git", ["ls-files", "--others", "--exclude-standard", "-z"], { cwd: retained.cwd })).stdout.split("\0"),
+    ].filter(Boolean);
+    const retainedIndexEnv = { ...process.env, GIT_INDEX_FILE: retainedIndexPath };
+    if (worktreePaths.length) await execFileAsync("git", ["add", "--all", "--", ...worktreePaths], { cwd: retained.cwd, env: retainedIndexEnv });
+    const retainedTree = (await execFileAsync("git", ["write-tree"], { cwd: retained.cwd, env: retainedIndexEnv })).stdout.trim();
+    const mergeIndexEnv = { ...process.env, GIT_INDEX_FILE: mergeIndexPath };
+    await execFileAsync("git", ["read-tree", "-m", mergeBase, retainedTree, claim.sha], { cwd: repo, env: mergeIndexEnv });
+    const conflicts = (await execFileAsync("git", ["diff", "--name-only", "--diff-filter=U", "-z"], { cwd: repo, env: mergeIndexEnv })).stdout
+      .split("\0").filter(Boolean).sort();
+    if (conflicts.length) throw new Error(`retained worktree 落後 ${Number.isSafeInteger(commitCount) ? commitCount : 0} 個 commit，會衝突的檔案：${conflicts.join(", ")}`);
+  } finally {
+    await rm(indexDir, { recursive: true, force: true });
+  }
+}
 const pollLockStaleMs = 30 * 60 * 1000;
 function validBranchName(value: string): boolean {
   return /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(value) && !value.includes("..") && !value.includes("//") && !value.endsWith("/") && !value.endsWith(".") && !value.includes("@{");
@@ -280,6 +320,7 @@ export const MAX_DRAFT_PR_BODY_BYTES = 60 * 1024;
 const MAX_DELIVERY_FIELD_LENGTH = 4 * 1024;
 const MAX_DELIVERY_LIST_ITEMS = 100;
 const MAX_DELIVERY_LIST_ITEM_LENGTH = 512;
+export { MAX_DELIVERY_LIST_ITEM_LENGTH };
 export interface DeliveryChangedFile { path: string; status: string; }
 export interface DeliveryGitEvidence { files: DeliveryChangedFile[]; filesChanged: number; insertions: number; deletions: number; }
 export interface DraftPullRequestDelivery {
@@ -673,6 +714,7 @@ export async function pollOnce(adapter: GitHubAdapter, config: QueueConfig): Pro
     claimed = true;
     await adapter.comment(issue, `dev-flow worker 已 claim 此 Issue。job：${job}；Attempt：${claim.attempt ?? attemptNumber}`);
     await record("claim.json", { job, workerId: config.workerId, repository: issue.repository, issueNumber: issue.number, attempt: claim.attempt ?? attemptNumber, ...claim });
+    if (resume && retained && resumeContext) await validateResumeDeliveryPreconditions(repo, claim, retained, resumeContext.decision);
     tree = await worktree(config, repo, issue, claim, retained);
     const specMarkdown = issue.body;
     await mkdir(join(tree.cwd, ".agent", "specs"), { recursive: true });

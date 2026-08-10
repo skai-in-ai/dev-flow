@@ -108,7 +108,9 @@ Comment 的 `id` 也有同類陷阱：`gh issue view --json comments` 回的是 
 
 帶 `dev-flow-resume` 但還沒有可執行決策的 Issue（沒有新 comment、決策過期、格式不合、留言者無寫入權限），會在**選取階段就被跳過**：不 claim、不留言、不改 label，只在本機 ledger 記一筆，並讓 poll 繼續往後找下一個可執行的 Issue。這一點是刻意的：等人回覆可能等好幾天，若每輪都貼一則報告，Issue 會每 300 秒被灌一則留言，而且因為它在 FIFO 最前面，後面排隊的 Issue 會被永久餓死。同樣地，不回應未授權的留言，也避免任何有留言權限的人驅動無上限的 Issue 寫入。
 
-有了合法決策之後才會 claim。此後的失敗（provenance 遺失或損壞、worktree 有無法解釋的變動、attempt 對不上）會貼出**一則**needs-human 報告；因為決策必須晚於最新報告，這則新報告會讓剛才那個決策失效，Issue 回到等待狀態，不會反覆重試。這種在 claim 前就失敗的情況會一併移除 `dev-flow-resume`，由人連同新決策一起重新加上。
+有了合法決策之後才會 claim。claim 成功後、任何 agent 呼叫前，resume 另外執行交付前提檢查：授權決策不得超過 512 個字元；若 retained worktree 的 baseline SHA 與 claim 的 default branch SHA 不同，先補 fetch 本機缺少的 claimed SHA，確認 baseline 是 claim SHA 的 ancestor，保留 retained worktree 現有的 Git index 狀態，再納入 unstaged 與 untracked 變更寫入暫存 Git index，計算落後 commit 數與未合併的衝突檔案。只有 fast-forward 且確認無衝突才繼續；歷史分歧、衝突或過長決策會貼出 needs-human 報告，不會修改 retained worktree，也不會呼叫 agent。落後但可自動合併時照常執行。
+
+此後的失敗（provenance 遺失或損壞、worktree 有無法解釋的變動、attempt 對不上）會貼出**一則**needs-human 報告；因為決策必須晚於最新報告，這則新報告會讓剛才那個決策失效，Issue 回到等待狀態，不會反覆重試。這種在 claim 前就失敗的情況會一併移除 `dev-flow-resume`，由人連同新決策一起重新加上。
 
 provenance 遺失、損壞、或 worktree 有無法由 provenance 解釋的變動時直接停在 needs-human，不重建、不捨棄、不 resume。自動 `rebuild` 與 `cancel` 不在此版範圍；要重建或放棄由人自己動手。
 
