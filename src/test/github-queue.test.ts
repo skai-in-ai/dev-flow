@@ -102,6 +102,10 @@ test("resume decisions accept only an authorized, fresh, non-empty narrow fix", 
   assert.equal(parseResumeDecision({ ...comment, createdAt: "stale" }, 1), undefined);
   assert.equal(parseResumeDecision(comment, 1, new Date(Date.now() + 1_000).toISOString()), undefined, "a comment older than the attempt report is stale");
   assert.equal(parseResumeDecision(comment, 1, new Date(Date.now() - 1_000).toISOString()), "narrow fix the failing verification");
+  // `gh issue view --json comments` returns GraphQL node IDs, so an integer-only identity check
+  // rejects every real decision and resume silently never fires.
+  assert.equal(parseResumeDecision({ ...comment, id: "IC_kwDOS6Y-s88AAAABOA-oNg" }, 1), "narrow fix the failing verification");
+  assert.equal(parseResumeDecision({ ...comment, id: "  " }, 1), undefined);
 });
 
 test("needs-human report carries the retained evidence and only offers resume when resumable", () => {

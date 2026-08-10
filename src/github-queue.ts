@@ -17,7 +17,8 @@ import type { Tier } from "./agents/contracts.js";
 
 const execFileAsync = promisify(execFile);
 export interface QueueIssue { number: number; title: string; body: string; labels: string[]; repository: string; createdAt?: string; }
-export interface QueueComment { id: number; author: string; body: string; createdAt: string; }
+/** `gh issue view --json comments` returns GraphQL node IDs (`IC_kwDO…`), not REST integers. */
+export interface QueueComment { id: string | number; author: string; body: string; createdAt: string; }
 export interface DraftPullRequest { url: string; number?: number; }
 export interface QueueClaim { defaultBranch: string; sha: string; attempt?: number; claimRef?: string; }
 export interface ResumeContext { attempt: number; decision: string; decisionAuthor: string; previousOutcome: RunOutcome; decisionLog: string; findings: string[]; attemptedFixes: string[]; testEvidence: Array<{ command: string; passed: boolean }>; }
@@ -71,7 +72,8 @@ export function renderNeedsHumanReport(report: NeedsHumanReport): string {
  * so no automated path can discard a retained worktree.
  */
 export function parseResumeDecision(comment: QueueComment, previousAttempt: number, previousAttemptEndedAt?: string): string | undefined {
-  if (previousAttempt < 1 || !comment.body.trim() || !Number.isInteger(comment.id)) return undefined;
+  const identified = typeof comment.id === "string" ? comment.id.trim().length > 0 : Number.isInteger(comment.id);
+  if (previousAttempt < 1 || !comment.body.trim() || !identified) return undefined;
   const createdAt = Date.parse(comment.createdAt);
   if (!comment.createdAt || !Number.isFinite(createdAt) || createdAt <= 0) return undefined;
   if (previousAttemptEndedAt !== undefined) {
@@ -137,8 +139,8 @@ export class GhCliAdapter implements GitHubAdapter {
   }
   async listComments(issue: QueueIssue): Promise<QueueComment[]> {
     const json = await gh(["issue", "view", String(issue.number), "--repo", issue.repository, "--json", "comments"]);
-    const value = JSON.parse(json) as { comments?: Array<{ id?: number; author?: { login?: string }; body?: string; createdAt?: string }> };
-    return (value.comments ?? []).map((comment) => ({ id: comment.id ?? 0, author: comment.author?.login ?? "", body: comment.body ?? "", createdAt: comment.createdAt ?? "" }));
+    const value = JSON.parse(json) as { comments?: Array<{ id?: string | number; author?: { login?: string }; body?: string; createdAt?: string }> };
+    return (value.comments ?? []).map((comment) => ({ id: comment.id ?? "", author: comment.author?.login ?? "", body: comment.body ?? "", createdAt: comment.createdAt ?? "" }));
   }
   /**
    * `permission` is GitHub's legacy string and is one of `admin` / `write` / `read` / `none`;
