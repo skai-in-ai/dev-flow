@@ -41,6 +41,10 @@ test("streaming snapshots are dropped and the structural skeleton is kept", () =
   assert.ok(compacted.length < stdout.length / 100, `expected a two-orders-of-magnitude reduction, got ${stdout.length} → ${compacted.length}`);
 });
 
+test("JSON null is compacted without a callback exception", () => {
+  assert.equal(compactPiEvents("null\n"), "null\n");
+});
+
 test("a line that cannot be parsed is kept rather than silently discarded", () => {
   const compacted = compactPiEvents(`not json\n${line({ type: "turn_start" })}`);
   const events = compacted.split("\n").filter(Boolean).map((entry) => JSON.parse(entry) as Record<string, unknown>);

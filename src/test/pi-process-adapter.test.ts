@@ -4,7 +4,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PiProcessAdapter, parseJsonLines, parseReview, renderPrompt, type PiProcessRunner } from "../adapters/pi/pi-process-adapter.js";
+import { NodePiProcessRunner, PiProcessAdapter, parseJsonLines, parseReview, renderPrompt, type PiProcessRunner } from "../adapters/pi/pi-process-adapter.js";
 import { renderClassifierPrompt } from "../classifier-prompt.js";
 
 test("parses Pi JSON, message_end content blocks, and Pi CLI args", async () => {
@@ -15,11 +15,67 @@ test("parses Pi JSON, message_end content blocks, and Pi CLI args", async () => 
   assert.equal(result.verdict, "pass"); assert.deepEqual(result.findings, ["looks good"]); assert.deepEqual(result.usage, { input: 12 });
   assert.equal(received.includes("--thinking"), true); assert.equal(received.includes("--reasoning"), false); assert.equal(received.includes("--session-dir"), true); assert.equal(received.includes("--no-extensions"), true); assert.equal(received.includes("read,grep,find,ls"), true);
 });
+test("streams cumulative updates with bounded compact retention and keeps final fields", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-stream-"));
+  const script = `for (let i = 0; i < 200; i++) process.stdout.write(JSON.stringify({type:"message_update",message:{content:[{type:"text",text:"x".repeat(i * 100)}]}})+String.fromCharCode(10)); process.stdout.write(JSON.stringify({type:"message_end",message:{content:[{type:"text",text:"VERDICT: pass"+String.fromCharCode(10)+"- final"}]}})+String.fromCharCode(10)); process.stdout.write(JSON.stringify({type:"result",usage:{input:42}})+String.fromCharCode(10));`;
+  const tracePath = join(dir, "trace.jsonl");
+  const result = await new NodePiProcessRunner({ maxTraceBytes: 64, maxPartialLineBytes: 1_000_000 }).run(process.execPath, ["-e", script], { cwd: dir, input: "", timeoutMs: 1_000, tracePath });
+  assert.equal(parseReview(result.assistant ?? "").verdict, "pass");
+  assert.deepEqual(parseReview(result.assistant ?? "").findings, ["final"]);
+  assert.deepEqual(result.usage, { input: 42 });
+  const trace = await readFile(tracePath, "utf8");
+  assert.ok(trace.includes("trace_truncated"));
+  assert.ok(Buffer.byteLength(trace, "utf8") <= 64);
+});
+
+test("reassembles split JSONL and fails closed on an overlong record", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-stream-"));
+  const split = `const x=JSON.stringify({type:"message_end",text:"VERDICT: pass"}); process.stdout.write(x.slice(0,3)); setTimeout(()=>process.stdout.write(x.slice(3)+"\\n"),10);`;
+  const runner = new NodePiProcessRunner({ maxPartialLineBytes: 100 });
+  const ok = await runner.run(process.execPath, ["-e", split], { cwd: dir, input: "", timeoutMs: 1_000 });
+  assert.match(ok.assistant ?? "", /VERDICT: pass/);
+  const tooLong = new NodePiProcessRunner({ maxPartialLineBytes: 32 });
+  await assert.rejects(tooLong.run(process.execPath, ["-e", "process.stdout.write('x'.repeat(100))"], { cwd: dir, input: "", timeoutMs: 1_000 }), /JSONL record exceeds/);
+});
+
+test("preserves UTF-8 when an event is split in the middle of a code point", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-stream-"));
+  const script = `const bytes=Buffer.from(JSON.stringify({type:"message_end",text:"VERDICT: pass — 臺灣"})+"\\n"); const split=bytes.indexOf(Buffer.from("臺"))+1; process.stdout.write(bytes.subarray(0,split)); setTimeout(()=>process.stdout.write(bytes.subarray(split)),20);`;
+  const result = await new NodePiProcessRunner().run(process.execPath, ["-e", script], { cwd: dir, input: "", timeoutMs: 1_000 });
+  assert.equal(result.assistant, "VERDICT: pass — 臺灣");
+});
+
+test("fails closed when the final assistant text exceeds its bound", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-stream-"));
+  const script = `process.stdout.write(JSON.stringify({type:"message_end",text:"x".repeat(1_048_577)})+String.fromCharCode(10));`;
+  await assert.rejects(new NodePiProcessRunner().run(process.execPath, ["-e", script], { cwd: dir, input: "", timeoutMs: 1_000 }), /assistant text exceeds/);
+});
+
+test("keeps bounded stderr diagnostics and marks truncation", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-stream-"));
+  const runner = new NodePiProcessRunner({ maxStderrBytes: 8 });
+  const result = await runner.run(process.execPath, ["-e", "process.stderr.write('0123456789'); process.exit(3)"], { cwd: dir, input: "", timeoutMs: 1_000 });
+  assert.equal(result.exitCode, 3);
+  assert.match(result.stderr, /\[stderr truncated; showing last 8 bytes\]/);
+  assert.ok(result.stderr.length < 128);
+});
+
+test("reports spawn errors as normal rejections", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-stream-"));
+  await assert.rejects(new NodePiProcessRunner().run(join(dir, "missing-pi"), [], { cwd: dir, input: "", timeoutMs: 1_000 }), /ENOENT/);
+});
+
+test("terminates a timed out child and reports the timeout state", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "pi-stream-"));
+  const result = await new NodePiProcessRunner().run(process.execPath, ["-e", "setTimeout(() => {}, 10_000)"], { cwd: dir, input: "", timeoutMs: 20 });
+  assert.equal(result.timedOut, true);
+});
+
 test("reports Pi timeout and preserves malformed JSON", async () => {
   const dir = await mkdtemp(join(tmpdir(), "pi-adapter-"));
   assert.deepEqual(parseJsonLines("oops\n")[0], { type: "unparsed", raw: "oops" });
-  const adapter = new PiProcessAdapter({ run: async () => ({ exitCode: null, stderr: "", timedOut: true, stdout: "" }) });
-  await assert.rejects(adapter.run({ role: "implementer", taskId: "x", prompt: "do", artifacts: {}, cwd: dir, sessionDir: join(dir, "session"), model: { model: "openai-codex/gpt-5.6-luna", reasoning: "low" } }), /timed out/);
+  const adapter = new PiProcessAdapter({ run: async () => ({ exitCode: null, stderr: "tail [stderr truncated; showing last 8 bytes]", timedOut: true, stdout: "" }) });
+  await assert.rejects(adapter.run({ role: "implementer", taskId: "x", prompt: "do", artifacts: {}, cwd: dir, sessionDir: join(dir, "session"), model: { model: "openai-codex/gpt-5.6-luna", reasoning: "low" } }), /timed out.*stderr truncated/);
 });
 
 test("router is explicitly started without tools", async () => {
