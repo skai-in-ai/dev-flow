@@ -77,6 +77,8 @@ Bullet 若整條被 Markdown code span 包住（`` - `npm test` ``），反引�
 | `dev-flow-needs-human` | spec、runtime、review、GitHub writeback 或 cleanup 需人工處理 |
 | `dev-flow-resume` | 人工已核准下一個 resume attempt；仍需授權 comment |
 
+Poll 也會檢查 allowlist 內 open 且帶 `dev-flow-running` 的 Issue。worker claim comment 必須由目前已驗證的 GitHub worker identity 發出，並帶有 machine-readable marker；marker 的 job、repository、Issue 與 attempt 必須和本機 ledger 的 `claim.json` 相符。升級前既有的合法 claim 仍接受舊固定格式，但同樣必須通過作者與 ledger 驗證；任意使用者複製 marker 或固定文字都不算 claim。若最新已驗證的 worker claim 超過 4 小時（可用 `DEV_FLOW_RUNNING_TIMEOUT_HOURS` 設定；未設定或非法值使用預設），就貼一則帶有專屬 `dev-flow-running-stale` marker 的提醒並加入 `dev-flow-needs-human`。這是純標記：不移除或改動既有 label、不回收 worktree、branch 或 claim ref，也不推論 process liveness；只有目前已驗證的 worker identity 所發出的 marker 會抑制重複留言，若先前加 label 失敗會重試補上。標記留言或 label 寫入失敗只影響該 Issue，不會中止同輪選取。這則提醒不是 needs-human attempt 報告，因此不會觸發 resume。
+
 Worker 只選 open 且帶 `dev-flow-ready` 或 `dev-flow-resume` 的 Issue，每次 poll 最多處理一個。不合法 Issue 會標記 needs-human，不會永久卡住後面的 queue。
 
 ## 選取順序
@@ -271,7 +273,7 @@ export DEV_FLOW_QUEUE_LEDGER=/Users/skai.wu/side/.orchestrator/queue-jobs
 /path/to/dev-flow/bin/dev-flow-worker
 ```
 
-`DEV_FLOW_ALLOWED_REPOS` 必填。`DEV_FLOW_MAX_TIER` 是操作者成本/風險上限，Issue 內 `max_tier` 只能再往下限制，不能突破環境上限。
+`DEV_FLOW_ALLOWED_REPOS` 必填。`DEV_FLOW_MAX_TIER` 是操作者成本/風險上限，Issue 內 `max_tier` 只能再往下限制，不能突破環境上限。`DEV_FLOW_RUNNING_TIMEOUT_HOURS` 控制 running Issue 的人工提醒門檻，預設 4 小時；未設定或非法值使用預設。
 
 ## Dry run
 
