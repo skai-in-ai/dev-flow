@@ -116,6 +116,12 @@ export function assertExecutableTestCommands(commands: string[]): void {
     if (/\p{Script=Han}/u.test(command) || /^(?:please\s+)?(?:run|execute)\s+(?:the\s+)?(?:tests?|build)\b/i.test(command.trim())) {
       throw new Error(`spec test requirement must be a raw executable shell command, not prose: ${command}`);
     }
+    // A surviving backtick is a leftover Markdown code span, not deliberate substitution:
+    // the shell would run the command and then execute its stdout. Fail loudly instead of
+    // silently gating on whether the test output happens to be a runnable command.
+    if (command.includes("`")) {
+      throw new Error(`spec test requirement must not contain backticks (shell command substitution): ${command}`);
+    }
   }
 }
 

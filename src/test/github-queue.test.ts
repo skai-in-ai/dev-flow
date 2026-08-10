@@ -6,6 +6,7 @@ import { promisify } from "node:util";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { specToHandoff } from "../spec.js";
 import { acquirePollLock, claimRef, reclaimWorktree, draftPullRequestBody, MAX_DRAFT_PR_BODY_BYTES, nextAttempt, orderQueue, parseIssueSpec, parseResumeDecision, pendingResume, publicationFiles, queueConfig, renderNeedsHumanReport, validateRetainedWorktree, worktree, worktreePath, type GitHubAdapter, type QueueClaim, type QueueComment, type QueueIssue } from "../github-queue.js";
 
 const execFileAsync = promisify(execFile);
@@ -24,6 +25,23 @@ test("queue parser requires approved, complete specs and never uses an issue rep
   assert.throws(() => parseIssueSpec(issue(valid.replace("- npm test", "- run the tests"))), /raw executable/);
   assert.throws(() => parseIssueSpec(issue(valid.replace("Change the behavior.\nMore detail.", ""))), /Objective/);
   assert.throws(() => parseIssueSpec(issue(valid.replace("Keep compatibility.", ""))), /Background and decisions/);
+});
+
+test("queue parser strips Markdown code spans so commands are not run as shell substitutions", () => {
+  // Backticked commands are what the Issue template invites and what humans write. Left in,
+  // `sh -c` runs the command and then executes its stdout, so preflight silently gates on
+  // whether the test output happens to be a runnable command instead of on the exit code.
+  const parsed = parseIssueSpec(issue(valid.replace("- npm test", "- `cd webui && uv run pytest -q`")));
+  assert.deepEqual(parsed.spec.testRequirements, ["cd webui && uv run pytest -q"]);
+  assert.deepEqual(
+    parseIssueSpec(issue(valid.replace("- src/a.ts", "- `src/a.ts`"))).spec.modificationScope,
+    ["src/a.ts"],
+  );
+  // A backtick that is not a whole-item code span is still a substitution; reject it loudly.
+  assert.throws(
+    () => specToHandoff(parseIssueSpec(issue(valid.replace("- npm test", "- npm test `date`"))).spec),
+    /backticks/,
+  );
 });
 
 test("installed GitHub template and example preserve the queue contract", () => {

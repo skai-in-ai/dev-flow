@@ -208,7 +208,11 @@ function bullets(text: string, required = true): string[] {
   const trimmed = text.trim();
   if (!required && /^(?:none|n\/a|無)$/i.test(trimmed)) return [];
   const lines = trimmed.split("\n").map((line) => line.trim()).filter(Boolean);
-  const values = lines.map((line) => line.match(/^-\s+(.+)$/)?.[1]?.trim());
+  // Strip the `code span` wrapper exactly as the CLI spec parser does (see `list` in spec.ts).
+  // The Issue template asks for shell commands as bullets, and every human writing Markdown
+  // backticks them. Left in place they reach the shell as a command substitution: the real
+  // command runs, and its stdout is then executed as the actual command.
+  const values = lines.map((line) => line.match(/^-\s+(.+)$/)?.[1]?.trim().replace(/^`(.+)`$/, "$1"));
   if (values.some((value) => !value)) throw new Error("issue spec list sections must contain only bullets (or none when optional)");
   if (required && !values.length) throw new Error("issue spec requires at least one bullet");
   return values as string[];

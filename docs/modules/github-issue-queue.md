@@ -59,6 +59,8 @@ Issue body 必須使用 `examples/github-issue-template.md`，並包含：
 
 Queue parser 的 fail-closed contract 僅是 deterministic 的：`status: approved`、每個 required section 的非空或合法 list 結構、已移除官方 `dev-flow-required` marker、空的 unresolved items，以及 raw executable test commands。它不會嘗試從任意 prose 推論語意完整度，也不維護 `TODO`、`later` 或其他詞彙 blacklist；語意審核屬於獨立的 Spec Gate，非本 queue parser 的責任。
 
+Bullet 若整條被 Markdown code span 包住（`` - `npm test` ``），反引號會被剝掉後才交給 shell，與 CLI spec parser 的 `list()` 行為一致。剝除後仍含反引號的 test command 會被拒絕：那是 shell 的命令替換，實際效果是先跑該指令、再把它的 stdout 當指令執行，preflight 會變成在賭「測試輸出湊巧是不是可執行指令」而不是看 exit code。
+
 ### Mobile approval flow
 
 1. 在 repository 的 **New issue** 頁面選 **Dev-flow task**，建立或繼續編輯 `status: draft` 的 body。
