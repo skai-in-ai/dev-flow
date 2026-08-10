@@ -51,18 +51,22 @@ function compactValue(value: unknown, depth = 0): unknown {
  *
  * 無法解析的行原樣保留（截斷過長字串）：看不懂的東西丟掉，就是把診斷未知故障的唯一線索丟掉。
  */
+export function compactPiEventLine(line: string): string | undefined {
+  if (!line.trim()) return undefined;
+  let event: unknown;
+  try { event = JSON.parse(line); } catch {
+    return JSON.stringify({ type: "unparsed", raw: compactValue(line) });
+  }
+  const type = event && typeof event === "object" ? (event as { type?: unknown }).type : undefined;
+  if (typeof type === "string" && DROPPED_EVENT_TYPES.has(type)) return undefined;
+  return JSON.stringify(compactValue(event));
+}
+
 export function compactPiEvents(stdout: string): string {
   const lines: string[] = [];
   for (const line of stdout.split("\n")) {
-    if (!line.trim()) continue;
-    let event: unknown;
-    try { event = JSON.parse(line); } catch {
-      lines.push(JSON.stringify({ type: "unparsed", raw: compactValue(line) }));
-      continue;
-    }
-    const type = (event as { type?: unknown }).type;
-    if (typeof type === "string" && DROPPED_EVENT_TYPES.has(type)) continue;
-    lines.push(JSON.stringify(compactValue(event)));
+    const compacted = compactPiEventLine(line);
+    if (compacted !== undefined) lines.push(compacted);
   }
   return lines.length ? `${lines.join("\n")}\n` : "";
 }

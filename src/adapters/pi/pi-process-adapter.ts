@@ -1,25 +1,177 @@
 import { spawn } from "node:child_process";
-import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, open, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { TextDecoder } from "node:util";
 
 import type { AgentRunRequest, AgentRunResult, AgentRunner, ReviewVerdict } from "../../agents/contracts.js";
 import { DEFAULT_PROMPT_BUDGET, applyBudget, type PromptBudget } from "../../prompt-budget.js";
-import { compactPiEvents, isPiSessionLog } from "../../ledger-retention.js";
+import { compactPiEventLine, compactPiEvents, isPiSessionLog } from "../../ledger-retention.js";
 
-export interface SpawnedProcess { stdout: string; stderr: string; exitCode: number | null; timedOut: boolean; }
-export interface PiProcessRunner { run(command: string, args: string[], options: { cwd: string; input: string; timeoutMs: number }): Promise<SpawnedProcess>; }
+export interface SpawnedProcess {
+  /** Compatibility field for injected runners; NodePiProcessRunner never fills raw stdout. */
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+  timedOut: boolean;
+  /** Compatibility field for injected runners; NodePiProcessRunner writes directly to tracePath. */
+  trace?: string;
+  tracePath?: string;
+  assistant?: string;
+  usage?: Record<string, unknown>;
+}
+export interface PiProcessRunner {
+  run(command: string, args: string[], options: { cwd: string; input: string; timeoutMs: number; tracePath?: string }): Promise<SpawnedProcess>;
+}
+
+export interface NodePiProcessRunnerLimits {
+  maxPartialLineBytes?: number;
+  maxStderrBytes?: number;
+  maxTraceBytes?: number;
+}
+
+const DEFAULT_LIMITS = { maxPartialLineBytes: 4 * 1_048_576, maxStderrBytes: 64 * 1_024, maxTraceBytes: 4 * 1_048_576 };
+const MAX_ASSISTANT_BYTES = 1_048_576;
+const traceTruncationEvent = `${JSON.stringify({ type: "trace_truncated" })}\n`;
+const stderrTruncationMarker = (limit: number): string => `[stderr truncated; showing last ${limit} bytes]`;
 
 export class NodePiProcessRunner implements PiProcessRunner {
-  async run(command: string, args: string[], options: { cwd: string; input: string; timeoutMs: number }): Promise<SpawnedProcess> {
-    return new Promise((resolveResult, reject) => {
-      const child = spawn(command, args, { cwd: options.cwd, stdio: ["pipe", "pipe", "pipe"] });
-      let stdout = "", stderr = "", timedOut = false;
-      child.stdout.on("data", (x) => { stdout += x; }); child.stderr.on("data", (x) => { stderr += x; });
-      const timer = setTimeout(() => { timedOut = true; child.kill("SIGTERM"); }, options.timeoutMs);
-      child.on("error", (error) => { clearTimeout(timer); reject(error); });
-      child.on("close", (exitCode) => { clearTimeout(timer); resolveResult({ stdout, stderr, exitCode, timedOut }); });
-      child.stdin.end(options.input);
-    });
+  private readonly limits: typeof DEFAULT_LIMITS;
+
+  constructor(limits: NodePiProcessRunnerLimits = {}) {
+    this.limits = { ...DEFAULT_LIMITS, ...limits };
+  }
+
+  async run(command: string, args: string[], options: { cwd: string; input: string; timeoutMs: number; tracePath?: string }): Promise<SpawnedProcess> {
+    const child = spawn(command, args, { cwd: options.cwd, stdio: ["pipe", "pipe", "pipe"] });
+    let traceFile: Awaited<ReturnType<typeof open>> | undefined;
+    let traceBytes = 0;
+    let traceTruncated = false;
+    let pending = "";
+    let stderr = Buffer.alloc(0);
+    let stderrTruncated = false;
+    let assistant: string | undefined;
+    let usage: Record<string, unknown> | undefined;
+    let timedOut = false;
+    let failure: Error | undefined;
+    let terminated = false;
+
+    const asError = (error: unknown): Error => error instanceof Error ? error : new Error(String(error));
+    const terminate = (): void => {
+      if (terminated) return;
+      terminated = true;
+      try { child.kill("SIGTERM"); } catch (error) { failure ??= asError(error); }
+    };
+    const fail = (error: unknown): void => {
+      if (timedOut) return;
+      failure ??= asError(error);
+      terminate();
+    };
+    const onChildError = (error: Error): void => fail(error);
+    const onStdinError = (error: Error): void => fail(error);
+    child.on("error", onChildError);
+    child.stdin.on("error", onStdinError);
+    const timer = setTimeout(() => { timedOut = true; terminate(); }, options.timeoutMs);
+    const closePromise = new Promise<number | null>((resolve) => child.once("close", (exitCode) => { clearTimeout(timer); resolve(exitCode); }));
+
+    const appendTrace = async (compacted: string | undefined): Promise<void> => {
+      if (!compacted || traceTruncated || !traceFile) return;
+      const addition = `${compacted}\n`;
+      const additionBytes = Buffer.byteLength(addition, "utf8");
+      if (traceBytes + additionBytes > this.limits.maxTraceBytes) {
+        traceTruncated = true;
+        const markerBytes = Buffer.byteLength(traceTruncationEvent, "utf8");
+        if (traceBytes + markerBytes <= this.limits.maxTraceBytes) {
+          await traceFile.appendFile(traceTruncationEvent, "utf8");
+          traceBytes += markerBytes;
+        }
+        return;
+      }
+      await traceFile.appendFile(addition, "utf8");
+      traceBytes += additionBytes;
+    };
+
+    const consume = async (line: string): Promise<void> => {
+      let event: unknown;
+      try { event = JSON.parse(line); } catch { event = undefined; }
+      if (event && typeof event === "object") {
+        const e = event as Record<string, unknown>;
+        const candidate = e.text ?? (e.message && typeof e.message === "object" ? (e.message as Record<string, unknown>).content : undefined);
+        if (e.type === "message_end" || e.type === "assistant" || e.type === "message" || e.role === "assistant") {
+          const text = typeof candidate === "string"
+            ? candidate
+            : Array.isArray(candidate)
+              ? candidate.filter((b) => b && typeof b === "object" && (b as Record<string, unknown>).type === "text").map((b) => String((b as Record<string, unknown>).text ?? "")).join("")
+              : undefined;
+          if (text !== undefined) {
+            if (Buffer.byteLength(text, "utf8") > MAX_ASSISTANT_BYTES) throw new Error(`Pi assistant text exceeds ${MAX_ASSISTANT_BYTES} bytes`);
+            assistant = text;
+          }
+        }
+        if (e.usage && typeof e.usage === "object") usage = e.usage as Record<string, unknown>;
+        else if (e.message && typeof e.message === "object" && (e.message as Record<string, unknown>).usage && typeof (e.message as Record<string, unknown>).usage === "object") usage = (e.message as Record<string, unknown>).usage as Record<string, unknown>;
+      }
+      await appendTrace(compactPiEventLine(line));
+    };
+
+    const consumeText = async (text: string): Promise<void> => {
+      let start = 0;
+      while (start < text.length) {
+        const newline = text.indexOf("\n", start);
+        const end = newline < 0 ? text.length : newline;
+        const part = text.slice(start, end);
+        const lineBytes = Buffer.byteLength(pending, "utf8") + Buffer.byteLength(part, "utf8");
+        if (lineBytes > this.limits.maxPartialLineBytes) throw new Error(`Pi stdout JSONL record exceeds ${this.limits.maxPartialLineBytes} bytes`);
+        if (newline < 0) {
+          pending += part;
+          return;
+        }
+        const line = `${pending}${part}`.replace(/\r$/, "");
+        pending = "";
+        await consume(line);
+        start = newline + 1;
+      }
+    };
+
+    if (options.tracePath) {
+      try { traceFile = await open(options.tracePath, "w"); } catch (error) { fail(error); }
+    }
+    const stdoutTask = (async (): Promise<void> => {
+      try {
+        const decoder = new TextDecoder("utf-8");
+        for await (const chunk of child.stdout) await consumeText(decoder.decode(chunk as Buffer, { stream: true }));
+        await consumeText(decoder.decode());
+        if (pending) { const line = pending; pending = ""; await consume(line.replace(/\r$/, "")); }
+      } catch (error) { fail(error); }
+    })();
+    const stderrTask = (async (): Promise<void> => {
+      try {
+        for await (const chunk of child.stderr) {
+          const addition = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+          const combined = Buffer.concat([stderr, addition]);
+          if (combined.length > this.limits.maxStderrBytes) stderrTruncated = true;
+          stderr = combined.subarray(Math.max(0, combined.length - this.limits.maxStderrBytes));
+        }
+      } catch (error) { fail(error); }
+    })();
+
+    try {
+      try { child.stdin.end(options.input); } catch (error) { fail(error); }
+      const [exitCode] = await Promise.all([closePromise, stdoutTask, stderrTask]);
+      if (failure) throw failure;
+      // A trace that cannot be closed is not a successful run: returning first and
+      // discovering the close error in finally would silently lose that failure.
+      if (traceFile) {
+        await traceFile.close();
+        traceFile = undefined;
+      }
+      const diagnostic = stderrTruncated ? `${stderr.toString("utf8")} ${stderrTruncationMarker(this.limits.maxStderrBytes)}` : stderr.toString("utf8");
+      return { stdout: "", stderr: diagnostic, exitCode, timedOut, tracePath: options.tracePath, assistant, usage };
+    } finally {
+      clearTimeout(timer);
+      child.removeListener("error", onChildError);
+      child.stdin.removeListener("error", onStdinError);
+      if (traceFile) await traceFile.close().catch((error) => { failure ??= asError(error); });
+    }
   }
 }
 
@@ -38,21 +190,26 @@ export class PiProcessAdapter implements AgentRunner {
     if (request.role === "router") args.push("--no-tools");
     else if (tools) args.push("--tools", tools);
     args.push(prompt);
-    const result = await this.runner.run(this.piCommand, args, { cwd: request.cwd, input: "", timeoutMs: request.timeoutMs ?? 15 * 60_000 });
-    // 只保存壓縮後的 trace。原始 stdout 的 message_update 是累積快照而非 delta，落地後
-    // 會隨模型輸出長度呈平方成長；判準與保留內容見 src/ledger-retention.ts。
-    await writeFile(join(request.sessionDir, "trace.jsonl"), compactPiEvents(result.stdout));
+    const tracePath = join(request.sessionDir, "trace.jsonl");
+    const result = await this.runner.run(this.piCommand, args, { cwd: request.cwd, input: "", timeoutMs: request.timeoutMs ?? 15 * 60_000, tracePath });
+    // NodePiProcessRunner 在串流期間直接寫入 compact trace；注入的 fake runner 若只提供 stdout，
+    // 才在 close 後使用同一個 canonical primitive 作相容 fallback。
+    if (result.trace !== undefined) await writeFile(tracePath, result.trace);
+    else if (result.tracePath === undefined) await writeFile(tracePath, compactPiEvents(result.stdout));
     // Pi 自己也在 session 目錄寫一份對話紀錄，內容與 trace 重疊。best-effort 移除：
     // 清不掉只是佔空間，不該讓它中斷一次成功的執行。
     for (const entry of await readdir(request.sessionDir).catch(() => [] as string[])) {
       if (isPiSessionLog(entry)) await rm(join(request.sessionDir, entry), { force: true }).catch(() => {});
     }
-    if (result.timedOut) throw new Error(`Pi ${request.role} timed out`);
+    if (result.timedOut) {
+      const diagnostic = result.stderr ? `: ${result.stderr}` : "";
+      throw new Error(`Pi ${request.role} timed out${diagnostic}`);
+    }
     if (result.exitCode !== 0) throw new Error(`Pi ${request.role} exited ${result.exitCode}: ${result.stderr}`);
-    const events = parseJsonLines(result.stdout);
-    const assistant = lastAssistantText(events);
+    const events = result.assistant === undefined || result.usage === undefined ? parseJsonLines(result.stdout) : [];
+    const assistant = result.assistant ?? lastAssistantText(events);
     const review = parseReview(assistant);
-    return { summary: assistant, verdict: review.verdict, findings: review.findings, usage: lastUsage(events), sessionMetadata: { sessionDir: request.sessionDir, tracePath: join(request.sessionDir, "trace.jsonl"), model: request.model.model, reasoning: request.model.reasoning } };
+    return { summary: assistant, verdict: review.verdict, findings: review.findings, usage: result.usage ?? lastUsage(events), sessionMetadata: { sessionDir: request.sessionDir, tracePath: join(request.sessionDir, "trace.jsonl"), model: request.model.model, reasoning: request.model.reasoning } };
   }
 }
 
