@@ -241,6 +241,25 @@ test("stale running marking ignores forged claims, fresh claims, and Issues with
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test("a replayed claim is not evidence when its only difference is the comment author", async () => {
+  const root = await mkdtemp("/tmp/dev-flow-stale-");
+  try {
+    // The claim marker is public, so anyone can copy a real job id out of an earlier comment.
+    // Authorship is the only thing separating this from a genuine claim: the job id is in the
+    // ledger and the timestamp is past the threshold. Isolating it matters because in the
+    // combined forged-claims test a fresher genuine claim hides whether this check runs at all.
+    const target = { ...issue(valid), number: 18, labels: ["dev-flow-running"] };
+    const adapter = new FakeAdapter([target]);
+    const job = "job-replayed";
+    await recordClaim(root, target, job, 1);
+    adapter.comments.push({ id: "replayed-only", author: "stranger", body: renderWorkerClaimComment(target, job, 1), createdAt: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString() });
+    await markStaleRunningIssues(adapter, staleConfig(root));
+    assert.deepEqual(adapter.posted, [], "a stranger's replayed claim must not be treated as this worker's claim");
+    assert.deepEqual(adapter.labelsAdded, []);
+    assert.deepEqual(target.labels, ["dev-flow-running"]);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("stale marking isolates label failures and retries a missing label", async () => {
   const root = await mkdtemp("/tmp/dev-flow-stale-");
   try {
