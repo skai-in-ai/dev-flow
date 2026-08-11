@@ -7,7 +7,7 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { specToHandoff } from "../spec.js";
-import { acquirePollLock, claimRef, reclaimWorktree, draftPullRequestBody, MAX_DRAFT_PR_BODY_BYTES, MAX_DELIVERY_LIST_ITEM_LENGTH, nextAttempt, orderQueue, parseIssueSpec, parseResumeDecision, pendingResume, postNeedsHumanReport, publicationFiles, queueConfig, renderNeedsHumanReport, validateRetainedWorktree, validateResumeDeliveryPreconditions, worktree, worktreePath, type GitHubAdapter, type QueueClaim, type QueueComment, type QueueIssue } from "../github-queue.js";
+import { acquirePollLock, claimRef, reclaimWorktree, draftPullRequestBody, markStaleRunningIssues, MAX_DRAFT_PR_BODY_BYTES, MAX_DELIVERY_LIST_ITEM_LENGTH, nextAttempt, orderQueue, parseIssueSpec, parseResumeDecision, pendingResume, postNeedsHumanReport, publicationFiles, queueConfig, renderNeedsHumanReport, renderWorkerClaimComment, validateRetainedWorktree, validateResumeDeliveryPreconditions, worktree, worktreePath, type GitHubAdapter, type QueueClaim, type QueueComment, type QueueIssue } from "../github-queue.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -160,19 +160,131 @@ class FakeAdapter implements GitHubAdapter {
   readonly claims: number[] = [];
   commentFailure: Error | undefined;
   removeLabelFailure: Error | undefined;
-  constructor(private readonly issues: QueueIssue[], private readonly writers: readonly string[] = ["maintainer"]) {}
+  addLabelFailure: Error | undefined;
+  addLabelFailureIssues = new Set<number>();
+  constructor(readonly issues: QueueIssue[], private readonly writers: readonly string[] = ["maintainer"]) {}
   async listReadyIssues(): Promise<QueueIssue[]> { return this.issues; }
+  async listRunningIssues(): Promise<QueueIssue[]> { return this.issues.filter((issue) => issue.labels.includes("dev-flow-running")); }
   async listComments(): Promise<QueueComment[]> { return this.comments; }
+  async currentUser(): Promise<string> { return "worker"; }
   async isAuthorized(_issue: QueueIssue, author: string): Promise<boolean> { return this.writers.includes(author); }
   async claim(_issue: QueueIssue, attempt = 1): Promise<QueueClaim | false> { this.claims.push(attempt); return { defaultBranch: "main", sha: "a".repeat(40), attempt }; }
   async removeLabel(_issue: QueueIssue, label: string): Promise<void> { if (this.removeLabelFailure) throw this.removeLabelFailure; this.labelsRemoved.push(label); }
-  async addLabel(_issue: QueueIssue, label: string): Promise<void> { this.labelsAdded.push(label); }
+  async addLabel(issue: QueueIssue, label: string): Promise<void> {
+    if (this.addLabelFailure && this.addLabelFailureIssues.has(issue.number)) throw this.addLabelFailure;
+    this.labelsAdded.push(label);
+    if (!issue.labels.includes(label)) issue.labels.push(label);
+  }
   async comment(_issue: QueueIssue, body: string): Promise<void> { if (this.commentFailure) throw this.commentFailure; this.posted.push(body); }
   async createDraftPullRequest(): Promise<{ url: string }> { throw new Error("not reachable in these tests"); }
 }
 
 const resumeIssue = (): QueueIssue => ({ ...issue(valid), labels: ["dev-flow-resume", "dev-flow-needs-human"], createdAt: "2026-08-01T00:00:00Z" });
 const report = (attempt: number, at: string): QueueComment => ({ id: 1, author: "worker", body: renderNeedsHumanReport({ issueNumber: 12, attempt, reason: "reviewer 未通過", findings: ["f"], attemptedFixes: ["a"], changedFiles: ["src/a.ts"], failedVerification: [], worktree: "/tmp/tree", branch: "codex/issue-12-safe-task", resumable: true }), createdAt: at });
+const staleConfig = (ledgerRoot: string) => ({ allowedRepos: ["owner/repo"], workspaceRoot: "/tmp", ledgerRoot, maxTier: 1 as const, dryRun: false, workerId: "test", runningTimeoutMs: 4 * 60 * 60 * 1000 });
+async function recordClaim(ledgerRoot: string, target: QueueIssue, job: string, attempt: number): Promise<void> {
+  mkdirSync(join(ledgerRoot, job), { recursive: true });
+  await writeFile(join(ledgerRoot, job, "claim.json"), JSON.stringify({ job, repository: target.repository, issueNumber: target.number, attempt }));
+}
+
+test("stale running Issues are marked once without changing existing labels", async () => {
+  const root = await mkdtemp("/tmp/dev-flow-stale-");
+  try {
+    const target = { ...issue(valid), labels: ["dev-flow-running", "dev-flow-resume"] };
+    const beforeLabels = [...target.labels];
+    const adapter = new FakeAdapter([target]);
+    const job = "job-1";
+    await recordClaim(root, target, job, 1);
+    adapter.comments.push({ id: "forged-marker", author: "stranger", body: "<!-- dev-flow-running-stale -->", createdAt: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString() });
+    adapter.comments.push({ id: "claim-1", author: "worker", body: renderWorkerClaimComment(target, job, 1), createdAt: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString() });
+    const config = staleConfig(root);
+    await markStaleRunningIssues(adapter, config);
+    adapter.comments.push({ id: "marker-1", author: "worker", body: adapter.posted[0], createdAt: new Date().toISOString() });
+    await markStaleRunningIssues(adapter, config);
+    assert.equal(adapter.posted.length, 1);
+    assert.match(adapter.posted[0], /dev-flow-running-stale/);
+    assert.ok(!adapter.posted[0].includes("dev-flow-needs-human-attempt:"));
+    assert.deepEqual(target.labels, [...beforeLabels, "dev-flow-needs-human"]);
+    assert.deepEqual(adapter.labelsRemoved, []);
+    assert.equal(await pendingResume(adapter, target), undefined, "a stale marker is not a needs-human report");
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("running Issue scan requests more than gh's default page", () => {
+  const source = readFileSync(join(process.cwd(), "src/github-queue.ts"), "utf8");
+  assert.match(source, /"--label", DEV_FLOW_LABEL\.running, "--limit", "1000", "--json"/);
+});
+
+test("stale running marking ignores forged claims, fresh claims, and Issues without claims", async () => {
+  const root = await mkdtemp("/tmp/dev-flow-stale-");
+  try {
+    const fresh = { ...issue(valid), number: 13, labels: ["dev-flow-running"] };
+    const missing = { ...issue(valid), number: 14, labels: ["dev-flow-running"] };
+    const adapter = new FakeAdapter([fresh, missing]);
+    const freshJob = "job-2";
+    await recordClaim(root, fresh, freshJob, 1);
+    adapter.comments.push({ id: "forged", author: "stranger", body: "dev-flow worker 已 claim 此 Issue。job：x；Attempt：1", createdAt: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString() });
+    adapter.comments.push({ id: "replayed", author: "stranger", body: renderWorkerClaimComment(fresh, freshJob, 1), createdAt: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString() });
+    adapter.comments.push({ id: "claim-2", author: "worker", body: renderWorkerClaimComment(fresh, freshJob, 1), createdAt: new Date(Date.now() - 60 * 60 * 1000).toISOString() });
+    await markStaleRunningIssues(adapter, staleConfig(root));
+    assert.deepEqual(adapter.posted, []);
+    assert.deepEqual(adapter.labelsAdded, []);
+
+    const legacy = { ...issue(valid), number: 17, labels: ["dev-flow-running"] };
+    const legacyJob = "legacy-job";
+    await recordClaim(root, legacy, legacyJob, 1);
+    adapter.issues.push(legacy);
+    adapter.comments.push({ id: "legacy-claim", author: "worker", body: `dev-flow worker 已 claim 此 Issue。job：${legacyJob}；Attempt：1`, createdAt: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString() });
+    await markStaleRunningIssues(adapter, staleConfig(root));
+    assert.equal(adapter.posted.length, 1, "a pre-marker claim must still be recognized");
+    assert.ok(legacy.labels.includes("dev-flow-needs-human"));
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("a replayed claim is not evidence when its only difference is the comment author", async () => {
+  const root = await mkdtemp("/tmp/dev-flow-stale-");
+  try {
+    // The claim marker is public, so anyone can copy a real job id out of an earlier comment.
+    // Authorship is the only thing separating this from a genuine claim: the job id is in the
+    // ledger and the timestamp is past the threshold. Isolating it matters because in the
+    // combined forged-claims test a fresher genuine claim hides whether this check runs at all.
+    const target = { ...issue(valid), number: 18, labels: ["dev-flow-running"] };
+    const adapter = new FakeAdapter([target]);
+    const job = "job-replayed";
+    await recordClaim(root, target, job, 1);
+    adapter.comments.push({ id: "replayed-only", author: "stranger", body: renderWorkerClaimComment(target, job, 1), createdAt: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString() });
+    await markStaleRunningIssues(adapter, staleConfig(root));
+    assert.deepEqual(adapter.posted, [], "a stranger's replayed claim must not be treated as this worker's claim");
+    assert.deepEqual(adapter.labelsAdded, []);
+    assert.deepEqual(target.labels, ["dev-flow-running"]);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("stale marking isolates label failures and retries a missing label", async () => {
+  const root = await mkdtemp("/tmp/dev-flow-stale-");
+  try {
+    const first = { ...issue(valid), number: 15, labels: ["dev-flow-running"] };
+    const second = { ...issue(valid), number: 16, labels: ["dev-flow-running"] };
+    const adapter = new FakeAdapter([first, second]);
+    const firstJob = "job-3";
+    const secondJob = "job-4";
+    await recordClaim(root, first, firstJob, 1);
+    await recordClaim(root, second, secondJob, 1);
+    adapter.comments.push({ id: "claim-3", author: "worker", body: renderWorkerClaimComment(first, firstJob, 1), createdAt: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString() });
+    adapter.comments.push({ id: "claim-4", author: "worker", body: renderWorkerClaimComment(second, secondJob, 1), createdAt: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString() });
+    adapter.addLabelFailure = new Error("label write failed");
+    adapter.addLabelFailureIssues.add(first.number);
+    await markStaleRunningIssues(adapter, staleConfig(root));
+    assert.equal(adapter.posted.length, 2, "one failed label write must not stop the next Issue");
+    assert.deepEqual(adapter.labelsAdded, ["dev-flow-needs-human"]);
+
+    adapter.comments.push(...adapter.posted.map((body, index) => ({ id: `marker-${index}`, author: "worker", body, createdAt: new Date().toISOString() })));
+    adapter.addLabelFailure = undefined;
+    await markStaleRunningIssues(adapter, staleConfig(root));
+    assert.equal(adapter.posted.length, 2, "an existing marker must not be duplicated");
+    assert.deepEqual(adapter.labelsAdded, ["dev-flow-needs-human", "dev-flow-needs-human"]);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 test("a resume Issue is not actionable until an authorized, fresh decision exists", async () => {
   const target = resumeIssue();
@@ -350,6 +462,9 @@ test("queue configuration requires an explicit repository allowlist and defaults
   const config = queueConfig({ DEV_FLOW_ALLOWED_REPOS: "owner/repo", DEV_FLOW_WORKER_ID: "test" });
   assert.equal(config.workspaceRoot, "/Users/skai.wu/side");
   assert.equal(config.workerId, "test");
+  assert.equal(config.runningTimeoutMs, 4 * 60 * 60 * 1000);
+  assert.equal(queueConfig({ DEV_FLOW_ALLOWED_REPOS: "owner/repo", DEV_FLOW_RUNNING_TIMEOUT_HOURS: "2" }).runningTimeoutMs, 2 * 60 * 60 * 1000);
+  assert.equal(queueConfig({ DEV_FLOW_ALLOWED_REPOS: "owner/repo", DEV_FLOW_RUNNING_TIMEOUT_HOURS: "invalid" }).runningTimeoutMs, 4 * 60 * 60 * 1000);
   assert.throws(() => queueConfig({ DEV_FLOW_ALLOWED_REPOS: "owner/repo", DEV_FLOW_WORKSPACE_ROOT: "/tmp" }), /inside \/Users\/skai\.wu\/side/);
 });
 

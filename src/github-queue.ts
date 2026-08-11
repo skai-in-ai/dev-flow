@@ -119,7 +119,10 @@ export function orderQueue(issues: readonly QueueIssue[]): QueueIssue[] {
 export interface GitHubAdapter {
   /** Any order; `pollOnce` owns selection order via `orderQueue`. */
   listReadyIssues(): Promise<QueueIssue[]>;
+  listRunningIssues?(): Promise<QueueIssue[]>;
   listComments?(issue: QueueIssue): Promise<QueueComment[]>;
+  /** The authenticated GitHub identity used to post worker comments. */
+  currentUser?(): Promise<string>;
   isAuthorized?(issue: QueueIssue, author: string): Promise<boolean>;
   /** Returns false when another worker has already atomically claimed this Issue. */
   claim(issue: QueueIssue, attempt?: number): Promise<QueueClaim | false>;
@@ -146,6 +149,20 @@ export class GhCliAdapter implements GitHubAdapter {
     }
     // An Issue carrying both labels is listed twice; selection order is decided by `orderQueue`.
     return [...new Map(all.map((item) => [`${item.repository}#${item.number}`, item])).values()];
+  }
+  async listRunningIssues(): Promise<QueueIssue[]> {
+    const all: QueueIssue[] = [];
+    for (const repo of this.repos) {
+      const json = await gh(["issue", "list", "--repo", repo, "--state", "open", "--label", DEV_FLOW_LABEL.running, "--limit", "1000", "--json", "number,title,body,labels,createdAt"]);
+      const issues = JSON.parse(json) as Array<{ number: number; title: string; body?: string; labels?: Array<{ name: string }>; createdAt?: string }>;
+      all.push(...issues.map((issue) => ({ number: issue.number, title: issue.title, body: issue.body ?? "", labels: (issue.labels ?? []).map((label) => label.name), repository: repo, createdAt: issue.createdAt })));
+    }
+    return [...new Map(all.map((item) => [`${item.repository}#${item.number}`, item])).values()];
+  }
+  async currentUser(): Promise<string> {
+    const value = JSON.parse(await gh(["api", "user"])) as { login?: string };
+    if (!value.login?.trim()) throw new Error("GitHub returned no authenticated user");
+    return value.login;
   }
   async listComments(issue: QueueIssue): Promise<QueueComment[]> {
     const json = await gh(["issue", "view", String(issue.number), "--repo", issue.repository, "--json", "comments"]);
@@ -194,8 +211,9 @@ export class GhCliAdapter implements GitHubAdapter {
   }
 }
 
-export interface QueueConfig { allowedRepos: readonly string[]; workspaceRoot: string; ledgerRoot: string; maxTier: Tier; dryRun: boolean; workerId: string; }
+export interface QueueConfig { allowedRepos: readonly string[]; workspaceRoot: string; ledgerRoot: string; maxTier: Tier; dryRun: boolean; workerId: string; runningTimeoutMs?: number; }
 const allowedWorkspaceRoot = resolve("/Users/skai.wu/side");
+const defaultRunningTimeoutMs = 4 * 60 * 60 * 1000;
 export function queueConfig(env: NodeJS.ProcessEnv = process.env): QueueConfig {
   const allowedRepos = (env.DEV_FLOW_ALLOWED_REPOS ?? "").split(",").map((x) => x.trim()).filter(Boolean);
   if (!allowedRepos.length) throw new Error("DEV_FLOW_ALLOWED_REPOS must contain owner/repository entries");
@@ -205,7 +223,10 @@ export function queueConfig(env: NodeJS.ProcessEnv = process.env): QueueConfig {
   const ledgerRoot = resolve(env.DEV_FLOW_QUEUE_LEDGER ?? join(root, ".orchestrator", "queue-jobs"));
   const rawTier = env.DEV_FLOW_MAX_TIER ?? "1";
   if (!/^[012]$/.test(rawTier)) throw new Error("DEV_FLOW_MAX_TIER must be 0, 1, or 2");
-  return { allowedRepos, workspaceRoot: root, ledgerRoot, maxTier: Number(rawTier) as Tier, dryRun: env.DEV_FLOW_DRY_RUN === "1", workerId: env.DEV_FLOW_WORKER_ID ?? `${process.pid}-${randomUUID().slice(0, 8)}` };
+  const rawRunningTimeout = env.DEV_FLOW_RUNNING_TIMEOUT_HOURS;
+  const runningTimeoutHours = rawRunningTimeout === undefined ? 4 : Number(rawRunningTimeout);
+  const runningTimeoutMs = Number.isFinite(runningTimeoutHours) && runningTimeoutHours > 0 ? runningTimeoutHours * 60 * 60 * 1000 : defaultRunningTimeoutMs;
+  return { allowedRepos, workspaceRoot: root, ledgerRoot, maxTier: Number(rawTier) as Tier, dryRun: env.DEV_FLOW_DRY_RUN === "1", workerId: env.DEV_FLOW_WORKER_ID ?? `${process.pid}-${randomUUID().slice(0, 8)}`, runningTimeoutMs };
 }
 
 function section(body: string, heading: string): string {
@@ -632,6 +653,79 @@ export async function pendingResume(adapter: GitHubAdapter, issue: QueueIssue): 
   return decision ? { previousAttempt: previous.attempt, decision, author: candidate.author } : undefined;
 }
 
+const staleRunningMarker = "<!-- dev-flow-running-stale -->";
+const workerClaimMarker = "dev-flow-worker-claim:";
+
+export function renderWorkerClaimComment(issue: QueueIssue, job: string, attempt: number): string {
+  const payload = Buffer.from(JSON.stringify({ job, attempt })).toString("base64url");
+  return `<!-- ${workerClaimMarker}${payload} -->\ndev-flow worker 已 claim 此 Issue。Issue：#${issue.number}；job：${job}；Attempt：${attempt}`;
+}
+
+function parseWorkerClaimComment(comment: QueueComment): { job: string; attempt: number } | undefined {
+  const marker = comment.body.match(new RegExp(`<!--\\s*${workerClaimMarker}([A-Za-z0-9_-]+)\\s*-->`));
+  if (marker) {
+    try {
+      const payload = JSON.parse(Buffer.from(marker[1], "base64url").toString("utf8")) as { job?: string; attempt?: number };
+      const attempt = payload.attempt;
+      if (typeof payload.job !== "string" || !payload.job.trim() || typeof attempt !== "number" || !Number.isSafeInteger(attempt) || attempt < 1) return undefined;
+      return { job: payload.job, attempt };
+    } catch { return undefined; }
+  }
+  // Claims posted before the machine-readable marker was introduced remain valid when
+  // their author is the authenticated worker and their job is present in the local ledger.
+  const legacy = comment.body.match(/^dev-flow worker 已 claim 此 Issue。job：(.+?)；Attempt：(\d+)\s*$/);
+  if (!legacy) return undefined;
+  const attempt = Number(legacy[2]);
+  return Number.isSafeInteger(attempt) && attempt > 0 ? { job: legacy[1], attempt } : undefined;
+}
+
+async function hasRecordedWorkerClaim(config: QueueConfig, issue: QueueIssue, claim: { job: string; attempt: number }): Promise<boolean> {
+  const jobs = await readdir(config.ledgerRoot).catch(() => [] as string[]);
+  for (const job of jobs) {
+    let recorded: { job?: string; repository?: string; issueNumber?: number; attempt?: number };
+    try { recorded = JSON.parse(await readFile(join(config.ledgerRoot, job, "claim.json"), "utf8")) as typeof recorded; } catch { continue; }
+    if (recorded.job === claim.job && recorded.repository === issue.repository && recorded.issueNumber === issue.number && recorded.attempt === claim.attempt) return true;
+  }
+  return false;
+}
+
+export function renderStaleRunningMarker(issue: QueueIssue, claimCreatedAt: string): string {
+  return `${staleRunningMarker}\nIssue #${issue.number} 的 dev-flow-running 已超過門檻，請人工確認執行狀態。最新 worker claim：${claimCreatedAt}`;
+}
+
+export async function markStaleRunningIssues(adapter: GitHubAdapter, config: QueueConfig): Promise<void> {
+  if (!adapter.listRunningIssues || !adapter.listComments || !adapter.currentUser) return;
+  let workerAuthor: string;
+  try {
+    workerAuthor = (await adapter.currentUser()).trim().toLowerCase();
+    if (!workerAuthor) return;
+  } catch { return; }
+  let issues: QueueIssue[];
+  try {
+    issues = (await adapter.listRunningIssues()).filter((issue) => config.allowedRepos.includes(issue.repository) && issue.labels.includes(DEV_FLOW_LABEL.running));
+  } catch { return; }
+  for (const issue of issues) {
+    try {
+      const comments = await adapter.listComments(issue);
+      const alreadyMarked = comments.some((comment) => comment.author.trim().toLowerCase() === workerAuthor && comment.body.includes(staleRunningMarker));
+      if (alreadyMarked && issue.labels.includes(DEV_FLOW_LABEL.needsHuman)) continue;
+      const claims = (await Promise.all(comments.map(async (comment) => {
+        // A public marker is replayable. Only comments authored by this worker's
+        // authenticated GitHub identity can be evidence of a worker claim.
+        if (comment.author.trim().toLowerCase() !== workerAuthor) return undefined;
+        const claim = parseWorkerClaimComment(comment);
+        if (!claim || !await hasRecordedWorkerClaim(config, issue, claim)) return undefined;
+        const at = Date.parse(comment.createdAt);
+        return Number.isFinite(at) ? { comment, at } : undefined;
+      }))).filter((entry): entry is { comment: QueueComment; at: number } => entry !== undefined);
+      const latestClaim = claims.sort((a, b) => b.at - a.at)[0];
+      if (!latestClaim || Date.now() - latestClaim.at <= (config.runningTimeoutMs ?? defaultRunningTimeoutMs)) continue;
+      if (!alreadyMarked) await adapter.comment(issue, renderStaleRunningMarker(issue, latestClaim.comment.createdAt));
+      if (!issue.labels.includes(DEV_FLOW_LABEL.needsHuman)) await adapter.addLabel(issue, DEV_FLOW_LABEL.needsHuman);
+    } catch { /* stale marking is best-effort and must not stop queue selection */ }
+  }
+}
+
 export async function postNeedsHumanReport(
   adapter: GitHubAdapter,
   issue: QueueIssue,
@@ -661,6 +755,7 @@ export async function pollOnce(adapter: GitHubAdapter, config: QueueConfig): Pro
   await mkdir(dirname(lockPath), { recursive: true });
   if (!await acquirePollLock(config, lockPath)) return { status: "idle" };
   try {
+    await markStaleRunningIssues(adapter, config);
     // Selection order is owned here, not by the adapter, so every adapter selects identically.
     const issues = orderQueue((await adapter.listReadyIssues()).filter((issue) => !issue.labels.includes(DEV_FLOW_LABEL.running) && !issue.labels.includes(DEV_FLOW_LABEL.prReady) && (issue.labels.includes(DEV_FLOW_LABEL.ready) || issue.labels.includes(DEV_FLOW_LABEL.resume)) && config.allowedRepos.includes(issue.repository)));
   // A resume Issue waiting on its human is skipped rather than selected, so it cannot hold the
@@ -722,7 +817,7 @@ export async function pollOnce(adapter: GitHubAdapter, config: QueueConfig): Pro
       return { status: "idle" };
     }
     claimed = true;
-    await adapter.comment(issue, `dev-flow worker 已 claim 此 Issue。job：${job}；Attempt：${claim.attempt ?? attemptNumber}`);
+    await adapter.comment(issue, renderWorkerClaimComment(issue, job, claim.attempt ?? attemptNumber));
     await record("claim.json", { job, workerId: config.workerId, repository: issue.repository, issueNumber: issue.number, attempt: claim.attempt ?? attemptNumber, ...claim });
     if (resume && retained && resumeContext) await validateResumeDeliveryPreconditions(repo, claim, retained, resumeContext.decision);
     tree = await worktree(config, repo, issue, claim, retained);

@@ -163,6 +163,7 @@ GitHub **Dev-flow task** template 會從 `status: draft` 開始；填完 require
 - Approved spec 的 test commands 會由 shell 執行；approval 不是 sandbox，只能接受受信任來源。
 - `scope.include/exclude` 是 prompt/review contract，沒有 deterministic path enforcement。
 - GitHub queue 以 repository allowlist、workspace containment、origin match、remote SHA 與 atomic claim 保護 worktree 建立。新增 repository 必須由人明示執行 onboarding；它驗證 queue 可定位的 checkout 與 SSH origin，並從不授權 Issue。
+- Poll 的 stale scan 只檢查 allowlist 內 open 的 `dev-flow-running` Issue，且只信目前已驗證 GitHub worker identity 發出的 claim comment 與本機 `claim.json`，也相容升級前的舊 claim 格式。marker 或舊固定文字可被公開複製，因此作者身分與 ledger 比對都是必要 gate；掃描只新增 `dev-flow-needs-human` 與提醒留言，不回收或變更既有 label、worktree、branch、claim ref，也不推論 process liveness。
 - Resume claim 成功後、任何 agent 呼叫前，worker 會補 fetch 本機缺少的 claimed SHA，並以暫存 Git index 比對 retained worktree（包含未 commit 變更）與 default branch；只在可合併時繼續，衝突或過長授權決策會停在 needs-human，不會修改 retained worktree。
 - Draft PR body 只接受 typed spec、Git 與 verification evidence；raw agent events、prompts、完整 report 與 ledger 不會發布。
 - Core orchestrator 不 commit/push；只有入口 A 的 queue wrapper 在 gates 通過後發布 branch 與 Draft PR。
