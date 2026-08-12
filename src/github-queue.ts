@@ -16,6 +16,16 @@ import { specToHandoff, parseSpec, assertExecutableTestCommands, type TaskSpec }
 import type { Tier } from "./agents/contracts.js";
 
 const execFileAsync = promisify(execFile);
+export const DEV_FLOW_LABELS = [
+  { name: "dev-flow-ready", color: "0E8A16", description: "已授權 spec 進入 dev-flow queue" },
+  { name: "dev-flow-running", color: "1D76DB", description: "dev-flow worker 正在執行" },
+  { name: "dev-flow-pr-ready", color: "5319E7", description: "dev-flow 已建立 Draft PR" },
+  { name: "dev-flow-needs-human", color: "D93F0B", description: "dev-flow 需要人工處理" },
+  { name: "dev-flow-resume", color: "FBCA04", description: "已授權 dev-flow resume attempt" },
+] as const;
+export const DEV_FLOW_LABEL = Object.fromEntries(DEV_FLOW_LABELS.map((label) => [label.name.slice("dev-flow-".length).replace(/-([a-z])/g, (_, char: string) => char.toUpperCase()), label.name])) as {
+  ready: "dev-flow-ready"; running: "dev-flow-running"; prReady: "dev-flow-pr-ready"; needsHuman: "dev-flow-needs-human"; resume: "dev-flow-resume";
+};
 export interface QueueIssue { number: number; title: string; body: string; labels: string[]; repository: string; createdAt?: string; }
 /** `gh issue view --json comments` returns GraphQL node IDs (`IC_kwDO…`), not REST integers. */
 export interface QueueComment { id: string | number; author: string; body: string; createdAt: string; }
@@ -131,7 +141,7 @@ export class GhCliAdapter implements GitHubAdapter {
   async listReadyIssues(): Promise<QueueIssue[]> {
     const all: QueueIssue[] = [];
     for (const repo of this.repos) {
-      for (const label of ["dev-flow-ready", "dev-flow-resume"]) {
+      for (const label of [DEV_FLOW_LABEL.ready, DEV_FLOW_LABEL.resume]) {
         const json = await gh(["issue", "list", "--repo", repo, "--state", "open", "--label", label, "--json", "number,title,body,labels,createdAt"]);
         const issues = JSON.parse(json) as Array<{ number: number; title: string; body?: string; labels?: Array<{ name: string }>; createdAt?: string }>;
         all.push(...issues.map((issue) => ({ number: issue.number, title: issue.title, body: issue.body ?? "", labels: (issue.labels ?? []).map((label) => label.name), repository: repo, createdAt: issue.createdAt })));
@@ -143,7 +153,7 @@ export class GhCliAdapter implements GitHubAdapter {
   async listRunningIssues(): Promise<QueueIssue[]> {
     const all: QueueIssue[] = [];
     for (const repo of this.repos) {
-      const json = await gh(["issue", "list", "--repo", repo, "--state", "open", "--label", "dev-flow-running", "--limit", "1000", "--json", "number,title,body,labels,createdAt"]);
+      const json = await gh(["issue", "list", "--repo", repo, "--state", "open", "--label", DEV_FLOW_LABEL.running, "--limit", "1000", "--json", "number,title,body,labels,createdAt"]);
       const issues = JSON.parse(json) as Array<{ number: number; title: string; body?: string; labels?: Array<{ name: string }>; createdAt?: string }>;
       all.push(...issues.map((issue) => ({ number: issue.number, title: issue.title, body: issue.body ?? "", labels: (issue.labels ?? []).map((label) => label.name), repository: repo, createdAt: issue.createdAt })));
     }
@@ -188,7 +198,7 @@ export class GhCliAdapter implements GitHubAdapter {
       if (/Reference already exists|already exists/i.test(detail)) return false;
       throw error;
     }
-    await gh(["issue", "edit", String(issue.number), "--repo", issue.repository, "--remove-label", "dev-flow-ready", "--remove-label", "dev-flow-resume", "--remove-label", "dev-flow-needs-human", "--add-label", "dev-flow-running"]);
+    await gh(["issue", "edit", String(issue.number), "--repo", issue.repository, "--remove-label", DEV_FLOW_LABEL.ready, "--remove-label", DEV_FLOW_LABEL.resume, "--remove-label", DEV_FLOW_LABEL.needsHuman, "--add-label", DEV_FLOW_LABEL.running]);
     return { defaultBranch: repo.default_branch, sha: sha.toLowerCase(), attempt, claimRef: claimRef(issue, attempt) };
   }
   async removeLabel(issue: QueueIssue, label: string): Promise<void> { await gh(["issue", "edit", String(issue.number), "--repo", issue.repository, "--remove-label", label]); }
@@ -629,7 +639,7 @@ export interface PendingResume { previousAttempt: number; decision: string; auth
  */
 export async function pendingResume(adapter: GitHubAdapter, issue: QueueIssue): Promise<PendingResume | undefined> {
   if (!adapter.listComments || !adapter.isAuthorized) return undefined;
-  if (issue.labels.includes("dev-flow-pr-ready")) return undefined;
+  if (issue.labels.includes(DEV_FLOW_LABEL.prReady)) return undefined;
   const comments = await adapter.listComments(issue);
   if (hasPublishedPullRequestComment(comments)) return undefined;
   const reports = comments.map((comment) => ({ comment, attempt: reportAttempt(comment), at: Date.parse(comment.createdAt) })).filter((entry): entry is { comment: QueueComment; attempt: number; at: number } => entry.attempt !== undefined && Number.isFinite(entry.at)).sort((a, b) => a.at - b.at);
@@ -692,13 +702,13 @@ export async function markStaleRunningIssues(adapter: GitHubAdapter, config: Que
   } catch { return; }
   let issues: QueueIssue[];
   try {
-    issues = (await adapter.listRunningIssues()).filter((issue) => config.allowedRepos.includes(issue.repository) && issue.labels.includes("dev-flow-running"));
+    issues = (await adapter.listRunningIssues()).filter((issue) => config.allowedRepos.includes(issue.repository) && issue.labels.includes(DEV_FLOW_LABEL.running));
   } catch { return; }
   for (const issue of issues) {
     try {
       const comments = await adapter.listComments(issue);
       const alreadyMarked = comments.some((comment) => comment.author.trim().toLowerCase() === workerAuthor && comment.body.includes(staleRunningMarker));
-      if (alreadyMarked && issue.labels.includes("dev-flow-needs-human")) continue;
+      if (alreadyMarked && issue.labels.includes(DEV_FLOW_LABEL.needsHuman)) continue;
       const claims = (await Promise.all(comments.map(async (comment) => {
         // A public marker is replayable. Only comments authored by this worker's
         // authenticated GitHub identity can be evidence of a worker claim.
@@ -711,7 +721,7 @@ export async function markStaleRunningIssues(adapter: GitHubAdapter, config: Que
       const latestClaim = claims.sort((a, b) => b.at - a.at)[0];
       if (!latestClaim || Date.now() - latestClaim.at <= (config.runningTimeoutMs ?? defaultRunningTimeoutMs)) continue;
       if (!alreadyMarked) await adapter.comment(issue, renderStaleRunningMarker(issue, latestClaim.comment.createdAt));
-      if (!issue.labels.includes("dev-flow-needs-human")) await adapter.addLabel(issue, "dev-flow-needs-human");
+      if (!issue.labels.includes(DEV_FLOW_LABEL.needsHuman)) await adapter.addLabel(issue, DEV_FLOW_LABEL.needsHuman);
     } catch { /* stale marking is best-effort and must not stop queue selection */ }
   }
 }
@@ -728,7 +738,7 @@ export async function postNeedsHumanReport(
   } catch (reportError) {
     if (resumable) {
       try {
-        await adapter.removeLabel(issue, "dev-flow-resume");
+        await adapter.removeLabel(issue, DEV_FLOW_LABEL.resume);
       } catch (removeError) {
         const detail = `needs-human 報告貼出失敗：${reportError instanceof Error ? reportError.message : String(reportError)}；dev-flow-resume 移除失敗：${removeError instanceof Error ? removeError.message : String(removeError)}`;
         await record("writeback-error.txt", detail);
@@ -747,12 +757,12 @@ export async function pollOnce(adapter: GitHubAdapter, config: QueueConfig): Pro
   try {
     await markStaleRunningIssues(adapter, config);
     // Selection order is owned here, not by the adapter, so every adapter selects identically.
-    const issues = orderQueue((await adapter.listReadyIssues()).filter((issue) => !issue.labels.includes("dev-flow-running") && !issue.labels.includes("dev-flow-pr-ready") && (issue.labels.includes("dev-flow-ready") || issue.labels.includes("dev-flow-resume")) && config.allowedRepos.includes(issue.repository)));
+    const issues = orderQueue((await adapter.listReadyIssues()).filter((issue) => !issue.labels.includes(DEV_FLOW_LABEL.running) && !issue.labels.includes(DEV_FLOW_LABEL.prReady) && (issue.labels.includes(DEV_FLOW_LABEL.ready) || issue.labels.includes(DEV_FLOW_LABEL.resume)) && config.allowedRepos.includes(issue.repository)));
   // A resume Issue waiting on its human is skipped rather than selected, so it cannot hold the
   // head of a FIFO queue for as long as the human takes to answer.
   let issue: QueueIssue | undefined; let resume: PendingResume | undefined;
   for (const candidate of issues) {
-    if (!candidate.labels.includes("dev-flow-resume")) { issue = candidate; break; }
+    if (!candidate.labels.includes(DEV_FLOW_LABEL.resume)) { issue = candidate; break; }
     if (config.dryRun) { issue = candidate; break; }
     resume = await pendingResume(adapter, candidate);
     if (resume) { issue = candidate; break; }
@@ -839,7 +849,7 @@ export async function pollOnce(adapter: GitHubAdapter, config: QueueConfig): Pro
     await git(tree.cwd, ["push", "--set-upstream", "origin", tree.branch]); pushedBranch = tree;
     const pr = await adapter.createDraftPullRequest(issue.repository, tree.branch, `Draft: ${issue.title}`, prBody);
     draftPrCreated = true;
-    await adapter.removeLabel(issue, "dev-flow-running"); await adapter.addLabel(issue, "dev-flow-pr-ready"); prReadyLabelApplied = true; await adapter.comment(issue, `Draft PR 已建立：${pr.url}\nJob：${job}\n此 Issue 不可再次 resume。`);
+    await adapter.removeLabel(issue, DEV_FLOW_LABEL.running); await adapter.addLabel(issue, DEV_FLOW_LABEL.prReady); prReadyLabelApplied = true; await adapter.comment(issue, `Draft PR 已建立：${pr.url}\nJob：${job}\n此 Issue 不可再次 resume。`);
     // 交付完成，現場不再需要：branch 已在遠端，ledger 搬到 job 目錄後回收 worktree。
     const reclaim = await reclaimWorktree(repo, tree, ledger);
     if (!reclaim.reclaimed) await record("worktree-reclaim-error.txt", reclaim.error ?? "unknown");
@@ -869,20 +879,20 @@ export async function pollOnce(adapter: GitHubAdapter, config: QueueConfig): Pro
         evidence = await latestRunEvidence(tree.cwd, outcome);
       }
       if (claimed) {
-        await adapter.removeLabel(issue, "dev-flow-running");
+        await adapter.removeLabel(issue, DEV_FLOW_LABEL.running);
         // If success writeback partially completed, remove its terminal label before
         // publishing the failure terminal label; never leave both terminal states.
-        if (prReadyLabelApplied) await adapter.removeLabel(issue, "dev-flow-pr-ready");
-        await adapter.addLabel(issue, "dev-flow-needs-human");
+        if (prReadyLabelApplied) await adapter.removeLabel(issue, DEV_FLOW_LABEL.prReady);
+        await adapter.addLabel(issue, DEV_FLOW_LABEL.needsHuman);
         // Only a retained worktree with freshly written provenance can be resumed;
         // anything past publication is a human-only recovery.
-        if (resumable) await adapter.addLabel(issue, "dev-flow-resume");
+        if (resumable) await adapter.addLabel(issue, DEV_FLOW_LABEL.resume);
       } else {
-        await adapter.removeLabel(issue, "dev-flow-ready");
+        await adapter.removeLabel(issue, DEV_FLOW_LABEL.ready);
         // A resume that failed its own preconditions must not stay selectable, or the next poll
         // reposts this same report; the human re-adds the label together with a fresh decision.
-        if (issue.labels.includes("dev-flow-resume")) await adapter.removeLabel(issue, "dev-flow-resume");
-        await adapter.addLabel(issue, "dev-flow-needs-human");
+        if (issue.labels.includes(DEV_FLOW_LABEL.resume)) await adapter.removeLabel(issue, DEV_FLOW_LABEL.resume);
+        await adapter.addLabel(issue, DEV_FLOW_LABEL.needsHuman);
       }
       const attempt = claimed ? attemptNumber : (previousAttemptNumber ?? 1);
       const reportOutcome = evidence.outcome;
