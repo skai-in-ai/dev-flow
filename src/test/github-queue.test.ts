@@ -212,7 +212,7 @@ test("stale running Issues are marked once without changing existing labels", as
 
 test("running Issue scan requests more than gh's default page", () => {
   const source = readFileSync(join(process.cwd(), "src/github-queue.ts"), "utf8");
-  assert.match(source, /"--label", "dev-flow-running", "--limit", "1000", "--json"/);
+  assert.match(source, /"--label", DEV_FLOW_LABEL\.running, "--limit", "1000", "--json"/);
 });
 
 test("stale running marking ignores forged claims, fresh claims, and Issues without claims", async () => {

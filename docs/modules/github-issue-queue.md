@@ -81,6 +81,18 @@ Poll 也會檢查 allowlist 內 open 且帶 `dev-flow-running` 的 Issue。worke
 
 Worker 只選 open 且帶 `dev-flow-ready` 或 `dev-flow-resume` 的 Issue，每次 poll 最多處理一個。不合法 Issue 會標記 needs-human，不會永久卡住後面的 queue。
 
+## 新 repository onboarding
+
+在建立第一張 Issue **前**，本機 operator 必須明示執行：
+
+```bash
+/path/to/dev-flow/bin/dev-flow-onboard /absolute/path/to/checkout
+```
+
+command 從嚴格的 `git@github.com:OWNER/REPOSITORY.git` origin 推導 repository，要求 checkout 位於 worker workspace root、是 Git worktree root，且 basename 是 queue 的 `<workspace>/<repo-name>` 解析路徑。它只建立缺少的五個 workflow labels，保留既有 label 屬性，將 repository 去重附加至已安裝 LaunchAgent 的 allowlist，然後 atomic 更新／reload／驗證。`--dry-run` 沒有 GitHub、plist 或 launchd 寫入。
+
+這是人明示的本機信任擴張；worker 不會因 Issue 自行加 allowlist。onboarding 不建立或修改 Issue，尤其不會加入 `dev-flow-ready`。plist reload 失敗時會復原舊檔並嘗試重載，先前成功建立的 additive labels 保留，方便安全重試。
+
 ## 選取順序
 
 跨 repository 以 Issue `createdAt` 遞增排序，取第一個。Issue 編號是 per-repository 的計數器，單以編號排序會讓新加入 allowlist 的 repository（從 #1 開始）永久插隊到既有 repository 前面。採 `createdAt` 而非 `updatedAt`，是為了讓編輯 Issue body 不會把它推到隊尾。時間戳完全相同時才以 repository 名稱與 Issue 編號打破平手（以 code unit 比較，不用 locale-dependent 的 `localeCompare`，否則不同機器的 worker 可能對同一個 queue 得出不同順序），確保選取是決定性的；時間戳缺漏或無法解析的 Issue 排在最後，不會靜默插隊。
