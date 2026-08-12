@@ -1,82 +1,21 @@
 # dev-flow
 
-一套以 **LLM-as-a-Judge** 為核心的自動化開發流程：把 approved spec 交給隔離的 implementer、deterministic tests 與 reviewer，自動完成實作、審查、修正與結果整理。
+**English** | [繁體中文](README.zh-TW.md)
 
-它不是另一個 coding agent，而是 coding agents 上方的 workflow。專案目前是 experimental MVP，適合已有 Git repo、meaningful tests，且能由一份 spec 說清楚的中小型變更。
+A spec-driven development workflow built specifically on top of [Pi Coding Agent](https://github.com/badlogic/pi-mono). It runs implementation, deterministic tests, and independent review in isolated sessions, then either returns a verified working-tree diff or publishes a Draft PR for human review.
 
-## 兩條入口
+dev-flow is not another coding agent. It is a workflow above coding agents: it decides how a task is routed, verifies results with executable gates, preserves review context across repair cycles, and stops at an explicit human boundary.
 
-兩條入口共用同一套 core orchestrator，但任務來源與成功後的交付不同。
+> **Status:** Experimental MVP. Best suited to small or medium changes in an existing Git repository with meaningful tests and requirements that fit in one approved spec.
 
-### 入口 A：GitHub Issue queue → Draft PR
+## What it demonstrates
 
-適合從手機或外部 ChatGPT 交辦、多任務排隊，並希望最後只在 GitHub review 成果。
-
-```text
-建立 Dev-flow task Issue
-  → status: approved + dev-flow-ready
-  → Mac worker claim
-  → claimed remote SHA 建立 isolated worktree／branch
-  → core orchestrator
-  ├─ ready_for_main：commit + push + Draft PR
-  └─ needs_human：Issue 留報告並保留 worktree
-       → dev-flow-resume + 新的授權 comment
-       → 同一 Issue／worktree 開始下一個 attempt
-```
-
-- Worker 只處理 allowlist repository。
-- 每個 Issue 使用隔離 worktree 與 `codex/issue-*` branch。
-- 完整 gates 通過後才 commit、push、建立 Draft PR。
-- 不會自動 merge 或 deploy。
-
-#### Resume 同一個 needs-human 任務
-
-`needs_human` 後不必另開 Issue。確認 retained worktree 沒有不明變動後：
-
-1. 由具 repository 寫入權限的協作者，在最新 needs-human 報告之後留言：
-
-   ```text
-   /dev-flow resume narrow fix <本次要修正的內容>
-   ```
-
-2. 加上 `dev-flow-resume` label。
-3. Worker 驗證 comment、attempt claim、worktree path／origin／branch／HEAD／Git state，再從原進度繼續。
-
-沒有新決策、權限不足或 provenance 不可信時不會執行 agent。Resume 不自動重建、丟棄 worktree 或接受 `rebuild`／`cancel` 指令。
-
-完整的 labels、claim、resume、publication 與 launchd 設定見 [GitHub Issue queue](docs/modules/github-issue-queue.md)。
-
-### 入口 B：Pi／Remote Pi／CLI → working-tree diff
-
-適合你正在同一個 Pi session 討論，想把結論保存成 spec 並立刻在目前 repo 開發。
-
-```text
-Pi／Remote Pi session 討論
-  → /dev-flow
-  ├─ 資訊不足：保存 draft／needs_clarification → 回 session 補充
-  └─ 資訊完整：保存 approved spec → core orchestrator
-       ├─ ready_for_main：變更留在目前 working tree
-       └─ needs_human：回到目前 session 處理
-```
-
-- `/dev-flow`：整理目前對話；完整才自動開始。
-- `/dev`：已有 approved spec 時直接執行，不重新整理對話。
-- `bin/dev-flow`、`--spec`、`--handoff`：相同路徑的 CLI 入口。
-- 不會自動 commit、push、建立 PR、merge 或 deploy。
-
-手機與 session pointer 細節見 [手機與 Pi 入口](docs/modules/mobile-entrypoint.md)。
-
-## 使用哪一條
-
-| 情境 | 入口 |
-|:---|:---|
-| 從手機／外部 ChatGPT 交辦，稍後只看 GitHub | A：Issue queue |
-| 多任務排隊、需要隔離 branch 與 Draft PR | A：Issue queue |
-| 正在 Pi／Remote Pi 討論，想立刻在目前 repo 開發 | B：`/dev-flow` |
-| 已有 approved spec 或 handoff | B：`/dev` 或 CLI |
-| 新專案 0→1、需求仍在探索、沒有 meaningful tests | 先不要使用 orchestrator |
-
-## 共用核心
+- **Context isolation:** implementers and reviewers run in fresh Pi sessions and never share conversational history.
+- **Deterministic verification:** test success comes from shell exit codes, not model claims.
+- **Risk-aware routing:** deterministic risk floors and an LLM classifier select the review tier; the actual diff is classified again after implementation.
+- **Bounded repair:** findings and responses survive across cycles, while repeated identical failures trip an early circuit breaker.
+- **Recoverable human checkpoints:** a `needs_human` run can resume from the same retained worktree only after authorization and provenance checks.
+- **Auditable execution:** each run records its diff, tests, routing decisions, cost, and a deterministic report.
 
 ```text
 approved spec / handoff
@@ -87,23 +26,97 @@ approved spec / handoff
   → deterministic tests
   → isolated review
   → fix / escalate / needs_spec
-  → ready_for_main 或 needs_human
+  → ready_for_main or needs_human
 ```
 
-主要性質：
+dev-flow deliberately targets Pi Coding Agent. The adapter boundary keeps Pi invocation and event handling out of the orchestration core; it does not imply that other agent providers are currently supported.
 
-- 每個 role 使用新的 Pi session，reviewer 不共享 implementer 對話。
-- `decisions.json` 保存跨 cycle findings 與 implementer responses。
-- 測試結果由 shell exit code 決定，不由模型宣告。
-- 最多三次修正、四次實作；相同失敗重複時提前熔斷。
-- 預設 `max-tier 1`；Tier 2 才使用 Terra reviewer 與 Sol final review。
-- 每次 run 在 `.orchestrator/runs/` 保存 diff、tests、routing、cost 與 `report.md`。
+## Two entry points
 
-模型與流程細節見 [Orchestration](docs/modules/orchestration.md)、[Routing](docs/modules/routing.md) 與 [Architecture](docs/architecture.md)。
+Both entry points use the same core orchestrator. They differ in where a task comes from and what happens after all gates pass.
 
-## 安裝
+### A. GitHub Issue queue → Draft PR
 
-需求：Node.js、Pi Coding Agent CLI，以及可用的 Codex OAuth 登入。
+Use this path to dispatch work from a phone or an external ChatGPT session, queue multiple tasks, and review the result later on GitHub.
+
+```text
+Create a Dev-flow task Issue
+  → status: approved + dev-flow-ready
+  → Mac worker claims the Issue
+  → isolated worktree and branch from the claimed remote SHA
+  → core orchestrator
+  ├─ ready_for_main: commit + push + Draft PR
+  └─ needs_human: report on the Issue + retained worktree
+       → dev-flow-resume + a new authorized comment
+       → next attempt on the same Issue and worktree
+```
+
+- The worker only processes allowlisted repositories.
+- Each Issue gets an isolated worktree and a `codex/issue-*` branch.
+- It commits, pushes, and opens a Draft PR only after all gates pass.
+- It never merges or deploys automatically.
+
+#### Resume a `needs_human` task
+
+There is no need to open a new Issue. After confirming that the retained worktree has no unexplained changes:
+
+1. A collaborator with repository write access comments after the latest needs-human report:
+
+   ```text
+   /dev-flow resume narrow fix <what to change in this attempt>
+   ```
+
+2. Add the `dev-flow-resume` label.
+3. The worker validates the comment, attempt claim, worktree path, origin, branch, HEAD, and Git state before continuing.
+
+The agent does not run without a new decision, sufficient permission, and trusted provenance. Resume does not rebuild or discard the worktree and does not accept `rebuild` or `cancel` commands.
+
+See [GitHub Issue queue](docs/modules/github-issue-queue.md) for labels, claims, resume behavior, publication, and launchd setup. The detailed documentation is currently written in Traditional Chinese.
+
+### B. Pi / Remote Pi / CLI → working-tree diff
+
+Use this path when you are discussing a change in a Pi session and want to turn the conclusion into a spec and start work in the current repository.
+
+```text
+Discuss the change in a Pi / Remote Pi session
+  → /dev-flow
+  ├─ incomplete: save draft / needs_clarification → continue discussion
+  └─ complete: save approved spec → core orchestrator
+       ├─ ready_for_main: leave changes in the current working tree
+       └─ needs_human: return control to the current session
+```
+
+- `/dev-flow` distills the current conversation and starts only when the spec is complete.
+- `/dev` starts from an existing approved spec without rebuilding it from the conversation.
+- `bin/dev-flow`, `--spec`, and `--handoff` expose the same path through the CLI.
+- This path does not commit, push, open a PR, merge, or deploy.
+
+See [Mobile and Pi entry point](docs/modules/mobile-entrypoint.md) for session-pointer details.
+
+## Which path should I use?
+
+| Situation | Entry point |
+|:---|:---|
+| Dispatch from a phone or external ChatGPT and review later on GitHub | A: Issue queue |
+| Queue multiple tasks with isolated branches and Draft PRs | A: Issue queue |
+| Continue directly from a Pi / Remote Pi discussion | B: `/dev-flow` |
+| Start from an approved spec or handoff | B: `/dev` or CLI |
+| Build a new project from scratch, explore unclear requirements, or work without meaningful tests | Do not use the orchestrator yet |
+
+## Core behavior
+
+- Every role gets a new Pi session; reviewers do not inherit the implementer's conversation.
+- `decisions.json` preserves findings and implementer responses across cycles.
+- Test outcomes are determined by shell exit codes.
+- A run allows up to three repair rounds and four implementation attempts; repeated identical failures stop early.
+- The default is `max-tier 1`; Tier 2 adds a Terra reviewer and Sol final review.
+- Every run writes its diff, tests, routing, cost, and `report.md` under `.orchestrator/runs/`.
+
+See [Orchestration](docs/modules/orchestration.md), [Routing](docs/modules/routing.md), and [Architecture](docs/architecture.md) for the implementation details.
+
+## Installation
+
+Requirements: Node.js, Pi Coding Agent CLI, and a working Codex OAuth login.
 
 ```bash
 git clone git@github.com:skai-in-ai/dev-flow.git
@@ -112,40 +125,40 @@ npm install
 npm test
 ```
 
-`npm install` 只建立 local `node_modules`，不會安裝或啟用 LaunchAgent。
+`npm install` only creates the local `node_modules`; it does not install or enable a LaunchAgent.
 
-## 快速開始
+## Quick start
 
-### 入口 B：Pi／Remote Pi／CLI
+### Pi / Remote Pi / CLI
 
-將 `extensions/orchestrate.ts` 連結到 Pi workspace 的 `.pi/extensions/`，執行 `/reload`，然後在同一個 session：
+Link `extensions/orchestrate.ts` into your Pi workspace's `.pi/extensions/`, run `/reload`, then continue in the same session:
 
 ```text
-先與 agent 討論需求
+Discuss the requirement with the agent
 /dev-flow
 ```
 
-### 已有 spec
+### Existing spec
 
 ```bash
 /path/to/dev-flow/bin/dev-flow /absolute/path/to/spec.md
 ```
 
-### 已有 handoff
+### Existing handoff
 
 ```bash
 npm run orchestrate -- --handoff /absolute/path/to/handoff.json
 ```
 
-### 入口 A：GitHub Issue queue
+### GitHub Issue queue
 
-首次把既有 checkout 納入 queue 前，明示執行一次 onboarding；它只建立缺少的 workflow labels 與更新本機 worker allowlist，**不會**替任何 Issue 加 `dev-flow-ready`：
+Before adding an existing checkout to the queue, explicitly onboard it once. Onboarding creates missing workflow labels and updates the local worker allowlist, but it **never** adds `dev-flow-ready` to an Issue:
 
 ```bash
 /path/to/dev-flow/bin/dev-flow-onboard /absolute/path/to/checkout
 ```
 
-先用 `--dry-run` 可檢查即將建立的 labels 與 LaunchAgent reload；onboarding 是本機 operator 的信任決定，worker 不會自行擴張 allowlist。
+Use `--dry-run` first to inspect the labels and LaunchAgent reload. Onboarding is a local operator trust decision; the worker never expands its own allowlist.
 
 ```bash
 export DEV_FLOW_ALLOWED_REPOS=OWNER/REPOSITORY
@@ -155,34 +168,36 @@ export DEV_FLOW_MAX_TIER=1
 /path/to/dev-flow/bin/dev-flow-worker
 ```
 
-GitHub **Dev-flow task** template 會從 `status: draft` 開始；填完 required sections、移除官方 placeholders、改為 `approved`，再加上 `dev-flow-ready`。Mac 定期 poll 可使用 [launchd 範例](deployment/dev-flow-worker.plist.example)。
+The GitHub **Dev-flow task** template starts with `status: draft`. Complete all required sections, remove the official placeholders, change the status to `approved`, and then add `dev-flow-ready`. For periodic polling on macOS, use the [launchd example](deployment/dev-flow-worker.plist.example).
 
-## 安全邊界
+## Security boundaries
 
-- Implementer 有 read/write/edit/bash；reviewer 只有 read/grep/find/ls。這是工具 allowlist，不是 OS sandbox。
-- Approved spec 的 test commands 會由 shell 執行；approval 不是 sandbox，只能接受受信任來源。
-- `scope.include/exclude` 是 prompt/review contract，沒有 deterministic path enforcement。
-- GitHub queue 以 repository allowlist、workspace containment、origin match、remote SHA 與 atomic claim 保護 worktree 建立。新增 repository 必須由人明示執行 onboarding；它驗證 queue 可定位的 checkout 與 SSH origin，並從不授權 Issue。
-- Poll 的 stale scan 只檢查 allowlist 內 open 的 `dev-flow-running` Issue，且只信目前已驗證 GitHub worker identity 發出的 claim comment 與本機 `claim.json`，也相容升級前的舊 claim 格式。marker 或舊固定文字可被公開複製，因此作者身分與 ledger 比對都是必要 gate；掃描只新增 `dev-flow-needs-human` 與提醒留言，不回收或變更既有 label、worktree、branch、claim ref，也不推論 process liveness。
-- Resume claim 成功後、任何 agent 呼叫前，worker 會補 fetch 本機缺少的 claimed SHA，並以暫存 Git index 比對 retained worktree（包含未 commit 變更）與 default branch；只在可合併時繼續，衝突或過長授權決策會停在 needs-human，不會修改 retained worktree。
-- Draft PR body 只接受 typed spec、Git 與 verification evidence；raw agent events、prompts、完整 report 與 ledger 不會發布。
-- Core orchestrator 不 commit/push；只有入口 A 的 queue wrapper 在 gates 通過後發布 branch 與 Draft PR。
-- 系統不提供 HTTP API、webhook、dashboard、自動 merge 或 deployment。
+- The implementer gets read/write/edit/bash tools; reviewers get read/grep/find/ls only. This is a tool allowlist, not an OS sandbox.
+- Test commands in an approved spec are executed by a shell. Approval is not sandboxing, so specs must come from trusted sources.
+- `scope.include/exclude` is a prompt and review contract, not deterministic path enforcement.
+- The GitHub queue protects worktree creation with a repository allowlist, workspace containment, origin matching, remote SHA verification, and atomic claims. A human must explicitly onboard each new repository; onboarding verifies a queue-addressable checkout and SSH origin, and never authorizes an Issue.
+- The stale scan checks only open `dev-flow-running` Issues in allowlisted repositories. It trusts claim comments only when they were posted by the verified worker identity and match the local `claim.json`, while remaining compatible with the legacy claim format. Because markers and fixed text can be copied, author identity and ledger matching are required gates. The scan only adds `dev-flow-needs-human` and a reminder comment; it never recovers work, changes existing labels, worktrees, branches, or claim refs, or infers process liveness.
+- After a resume claim succeeds and before any agent call, the worker fetches a missing claimed SHA and compares the retained worktree—including uncommitted changes—with the default branch using a temporary Git index. It continues only when the change is mergeable; conflicts or an overlong authorization decision return to `needs_human` without modifying the retained worktree.
+- Draft PR bodies accept only typed spec, Git, and verification evidence. Raw agent events, prompts, full reports, and ledgers are not published.
+- The core orchestrator never commits or pushes. Only the optional Issue queue wrapper publishes an isolated branch and Draft PR after all gates pass.
+- The system has no HTTP API, webhook, dashboard, automatic merge, or deployment.
 
-完整規則見 [Testing and safety](docs/rules/testing-and-safety.md) 與 [Threat model](docs/architecture.md#isolation-邊界)。
+See [Testing and safety](docs/rules/testing-and-safety.md) and the [threat model](docs/architecture.md#isolation-邊界) for the complete rules.
 
-## 文件索引
+## Documentation
 
-| 主題 | 文件 |
+Detailed documentation is currently maintained in Traditional Chinese.
+
+| Topic | Document |
 |:---|:---|
-| 定位、適用範圍與兩條入口 | [Overview](docs/overview.md) |
-| Pi／Remote Pi／手機入口 | [Mobile entrypoint](docs/modules/mobile-entrypoint.md) |
-| GitHub Issue queue、resume 與 launchd | [GitHub Issue queue](docs/modules/github-issue-queue.md) |
-| Core retry／review 流程 | [Orchestration](docs/modules/orchestration.md) |
-| Tier 與模型 routing | [Routing](docs/modules/routing.md) |
-| Spec／handoff contracts | [Spec](docs/contracts/spec.md)、[Handoff](docs/contracts/handoff.md) |
-| 架構與 artifacts | [Architecture](docs/architecture.md) |
-| 測試與安全規則 | [Testing and safety](docs/rules/testing-and-safety.md) |
+| Positioning, scope, and both entry points | [Overview](docs/overview.md) |
+| Pi / Remote Pi / mobile entry | [Mobile entry point](docs/modules/mobile-entrypoint.md) |
+| GitHub Issue queue, resume, and launchd | [GitHub Issue queue](docs/modules/github-issue-queue.md) |
+| Core retry and review flow | [Orchestration](docs/modules/orchestration.md) |
+| Tier and model routing | [Routing](docs/modules/routing.md) |
+| Spec and handoff contracts | [Spec](docs/contracts/spec.md), [Handoff](docs/contracts/handoff.md) |
+| Architecture and artifacts | [Architecture](docs/architecture.md) |
+| Testing and safety rules | [Testing and safety](docs/rules/testing-and-safety.md) |
 
 ## License
 

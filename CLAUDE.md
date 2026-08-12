@@ -77,8 +77,8 @@ bin/dev-flow --max-tier 2
 
 - 程式碼行為、tier/model 對照、handoff schema 或部署方式變更時，同步更新對應 `docs/`。
 - Reviewer 與 implementer 不共用 session；不可弱化 read-only reviewer 的工具 allowlist。
-- 動到 `toolsFor()`、`test-runner.ts` 的執行方式、或任何「這是 prompt 請求還是程式碼強制」的分野時，同步更新 README 的 Threat model。那一節逐項對應實際程式碼，漂掉就會變成會說謊的安全文件，比沒有更糟。
-- README 的「成本」一節與 `src/models.ts` 的註解共用同一批實測數字。改動 `modelFor()`、`DEFAULT_MAX_TIER` 或重新量測成本時，兩處一起改，並註明量測日期與 run 數。公開的數字沒有出處就是行銷文案。
+- 動到 `toolsFor()`、`test-runner.ts` 的執行方式、或任何「這是 prompt 請求還是程式碼強制」的分野時，同步更新兩份 README 的安全邊界。那一節逐項對應實際程式碼，漂掉就會變成會說謊的安全文件，比沒有更糟。
+- 英文 `README.md` 與繁中 `README.zh-TW.md` 的流程、安全邊界與支援範圍必須同步；文案不必逐句直譯，但事實不得分岔。
 - 核心 CLI/Pi orchestrator 停在 `ready_for_main`，不自動 commit 或 push。可選的 GitHub queue wrapper 只在同一套 gates 通過後發布隔離 branch 與 Draft PR，不 merge 或 deploy。
 - 修改 queue labels、claim、failure recovery、worktree 或 publication 時，同步更新 `docs/modules/github-issue-queue.md`、README Threat model 與 `docs/rules/testing-and-safety.md`。
 - Resume 的兩條不變量不得弱化：retained worktree 一定要通過 provenance 驗證才重用；尚未取得授權決策的 Issue 在選取階段就跳過，不 claim 也不寫入 GitHub。後者若破功，worker 會每輪 poll 重貼報告並卡住 FIFO 佇列。
