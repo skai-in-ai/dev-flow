@@ -1,0 +1,50 @@
+{
+  "schemaVersion": "task-compatibility-1",
+  "taskId": "terminal-bench@2.0/log-summary-date-ranges",
+  "taskName": "log-summary-date-ranges",
+  "datasetRef": "terminal-bench@2.0",
+  "datasetRevision": "2.0",
+  "taskRef": "log-summary-date-ranges",
+  "taskDigest": "57a85f9dd3d746eedcb6bf815f61332024a16bef1169b8222f3ae37e666a9e8a",
+  "workspaceKind": "git-repo",
+  "requiresGitRepo": true,
+  "requiresCleanTree": true,
+  "agentWorkdir": "/app",
+  "testsVisibleToAgent": true,
+  "verifierMode": "shared",
+  "internetAllowed": true,
+  "fullDevFlowCompatible": true,
+  "allowLocalCommit": false,
+  "incompatibilityReasons": [],
+  "deterministicTests": [
+    "test -d logs && test -n \"$(find logs -type f -name '*.log' -print -quit)\" && test -x \"$(command -v python3)\" && test \"$(git rev-parse --show-toplevel)\" = /app"
+  ],
+  "scopeInclude": ["summary.csv"],
+  "scopeExclude": [],
+  "acceptanceCriteria": [
+    "The unchanged external Harbor verifier passes with the required rows in /app/summary.csv.",
+    "The generated logs remain available as task inputs and summary.csv is the expected task output."
+  ],
+  "riskNotes": [
+    "The derivative changes only environment/Dockerfile to install git and commit the deterministic generated logs as the clean /app baseline.",
+    "The task verifier may install Python tooling and is the acceptance check, not the deterministic infrastructure test.",
+    "allowLocalCommit is false because comparison review evidence is working-tree based."
+  ],
+  "artifactRoot": "/logs/artifacts",
+  "agentLogDir": "/logs/agent/full-dev-flow",
+  "maxTier": 1,
+  "model": "gpt-5.6-luna",
+  "reasoningEffort": "medium",
+  "timeoutSeconds": 900,
+  "trialCount": 1,
+  "configStatus": "prepared-no-trial",
+  "sourceProvenance": {
+    "sourceRoot": "/private/tmp/terminal-bench-2.0-full/terminal-bench/log-summary-date-ranges",
+    "sourceRevision": "terminal-bench@2.0 (local extracted source; upstream commit not present)",
+    "sourceCanonicalSha256": "b4748834de77e20372571e2d91f2e4038fafa2e8088bd9d1a60cde60023424c5",
+    "derivativeRoot": "/private/tmp/terminal-bench-formal/log-summary-date-ranges",
+    "derivativeCanonicalSha256": "57a85f9dd3d746eedcb6bf815f61332024a16bef1169b8222f3ae37e666a9e8a",
+    "canonicalDigestRule": "sorted relative path + TAB + file SHA-256 + LF over all files",
+    "preservedByteForByte": ["instruction.md", "tests/test.sh", "tests/test_outputs.py", "solution/solve.sh", "task.toml", "environment/log_generator_deterministic.py"]
+  }
+}

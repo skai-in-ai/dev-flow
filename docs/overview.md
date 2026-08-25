@@ -39,6 +39,10 @@ Agent Orchestrator 將主討論 session 的結論保存為結構化 spec，再�
 
 適合正在同一個 Pi session 討論並立刻開發。`/dev-flow` 整理討論成 spec，approved 時啟動流程；完成後變更停在目前 working tree。它不 commit、push、建立 PR、merge 或 deploy；操作方式見 [手機與 Pi 入口](modules/mobile-entrypoint.md)。
 
+### 入口 C：Harbor evaluation / Full dev-flow wrapper（evaluation only）
+
+Harbor evaluation 現在另外提供 `harbor_full_dev_flow.agent:FullDevFlowAgent` 的薄 wrapper、wheel 內嵌的已 build JS bundle、pinned Node/Pi setup、compatibility fail-closed、ATIF/telemetry/artifact export 與 `bin/harbor-dev-flow` bridge。它不改入口 A／B、既有 core routing/cycle/session 語意，也不自動啟動 paid trial 或宣稱 benchmark 分數；正式 task revision/digest、Docker、auth、預算與 model smoke 仍需人工授權。foundation schema、fake fixture 與 preflight 規則見 [Harbor / Terminal-Bench foundation](benchmarks/harbor-terminal-bench.md)。
+
 ## 目前流程
 
 ```text
@@ -60,7 +64,7 @@ Agent Orchestrator 將主討論 session 的結論保存為結構化 spec，再�
 
 經 GitHub Issue queue 執行時，`needs_human` 多一條回頭路：worker 保留 worktree 與 provenance，人在原 Issue 留下授權的 narrow-fix 決策後，下一個 attempt 從同一個現場續跑。詳見 `docs/modules/github-issue-queue.md`。
 
-最多允許三次修正（共四次實作）。單純升級 tier 與 `needs_spec` 都不消耗 cycle，也不會自動重做已完成的 implementation；流程會先用較強 reviewer 重新檢查。implementer 的模型只看 cycle：首次 Luna Medium、兩次修正 Luna High、第三次修正才升 Terra Medium。tier 只決定 reviewer：T1 為 Luna High，T2 為 Terra Medium 加 Sol Medium final。**tier 上限預設為 1**，`--max-tier 2` 才會用到 Terra 與 Sol。相同失敗連續兩個 cycle 會提前熔斷。
+預設 `maxCycles=4`（包含第一次 implementation）；可用 `--max-cycles N` 設定總 implementation 上限。單純升級 tier 與 `needs_spec` 都不消耗 implementation cycle，也不會自動重做已完成的 implementation；流程會先用較強 reviewer 重新檢查。implementer 的模型只看 cycle：首次 Luna Medium、第二與第三次 Luna High、第四次才升 Terra Medium。tier 只決定 reviewer：T1 為 Luna High，T2 為 Terra Medium 加 Sol Medium final。**tier 上限預設為 1**，`--max-tier 2` 才會用到 Terra 與 Sol。相同失敗連續兩個 cycle 會提前熔斷。
 
 ## 入口 B 操作方式
 

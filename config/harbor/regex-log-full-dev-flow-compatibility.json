@@ -1,0 +1,50 @@
+{
+  "schemaVersion": "task-compatibility-1",
+  "taskId": "terminal-bench@2.0/regex-log",
+  "taskName": "regex-log",
+  "datasetRef": "terminal-bench@2.0",
+  "datasetRevision": "2.0",
+  "taskRef": "regex-log",
+  "taskDigest": "edfdccd39cc8ccd0385727bf0064af8bf431f975c79f79e2c408296aa168ff78",
+  "workspaceKind": "git-repo",
+  "requiresGitRepo": true,
+  "requiresCleanTree": true,
+  "agentWorkdir": "/app",
+  "testsVisibleToAgent": true,
+  "verifierMode": "shared",
+  "internetAllowed": true,
+  "fullDevFlowCompatible": true,
+  "allowLocalCommit": false,
+  "incompatibilityReasons": [],
+  "deterministicTests": [
+    "test -d /app && test -x \"$(command -v git)\" && test \"$(git rev-parse --show-toplevel)\" = /app"
+  ],
+  "scopeInclude": ["regex.txt"],
+  "scopeExclude": [],
+  "acceptanceCriteria": [
+    "The unchanged external Harbor verifier passes with the required regex in /app/regex.txt.",
+    "The regex file is the only expected task output."
+  ],
+  "riskNotes": [
+    "The source image has no task files at build time; the derivative only adds git and an empty clean baseline repository at /app.",
+    "The task verifier may install Python tooling and is the acceptance check, not the deterministic infrastructure test.",
+    "allowLocalCommit is false because comparison review evidence is working-tree based."
+  ],
+  "artifactRoot": "/logs/artifacts",
+  "agentLogDir": "/logs/agent/full-dev-flow",
+  "maxTier": 1,
+  "model": "gpt-5.6-luna",
+  "reasoningEffort": "medium",
+  "timeoutSeconds": 900,
+  "trialCount": 1,
+  "configStatus": "prepared-no-trial",
+  "sourceProvenance": {
+    "sourceRoot": "/private/tmp/terminal-bench-2.0-full/terminal-bench/regex-log",
+    "sourceRevision": "terminal-bench@2.0 (local extracted source; upstream commit not present)",
+    "sourceCanonicalSha256": "61cc6bad220bcdc3be9347c5b003776a718fbcdc2b5cb913bb66d6daab954486",
+    "derivativeRoot": "/private/tmp/terminal-bench-formal/regex-log",
+    "derivativeCanonicalSha256": "edfdccd39cc8ccd0385727bf0064af8bf431f975c79f79e2c408296aa168ff78",
+    "canonicalDigestRule": "sorted relative path + TAB + file SHA-256 + LF over all files",
+    "preservedByteForByte": ["instruction.md", "tests/test.sh", "tests/test_outputs.py", "solution/solve.sh", "task.toml"]
+  }
+}

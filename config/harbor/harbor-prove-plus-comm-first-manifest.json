@@ -1,0 +1,64 @@
+{
+  "schemaVersion": "benchmark-run-manifest-1",
+  "artifactRoot": {
+    "env": "HARBOR_FIRST_FORMAL_COMPARISON_ROOT"
+  },
+  "artifacts": [
+    {
+      "path": "prove-plus-comm-codex-formal-1/prove-plus-comm__3Sx5V2F",
+      "includeInComparison": true,
+      "failureCategory": null,
+      "invalidReason": null,
+      "estimatedCostUsd": 0.00941708,
+      "actualCostUsd": null
+    },
+    {
+      "path": "prove-plus-comm-single-pi-formal-3/prove-plus-comm__Tp7Zrnn",
+      "includeInComparison": true,
+      "failureCategory": null,
+      "invalidReason": null,
+      "estimatedCostUsd": 0.0190884,
+      "actualCostUsd": null
+    },
+    {
+      "path": "prove-plus-comm-full-dev-flow-formal-3/prove-plus-comm__4gt5JxD",
+      "includeInComparison": true,
+      "failureCategory": null,
+      "invalidReason": null,
+      "estimatedCostUsd": 0.01691,
+      "actualCostUsd": null
+    },
+    {
+      "path": "prove-plus-comm-single-pi-formal-1/prove-plus-comm__8UGerpB",
+      "includeInComparison": false,
+      "failureCategory": "infrastructure-invalid",
+      "invalidReason": "post-run cleanup incorrectly treated the controlled auth directory as failed credential cleanup",
+      "estimatedCostUsd": null,
+      "actualCostUsd": null
+    },
+    {
+      "path": "prove-plus-comm-single-pi-formal-2/prove-plus-comm__fGVh3gq",
+      "includeInComparison": false,
+      "failureCategory": "infrastructure-invalid",
+      "invalidReason": "Docker/TLS infrastructure failure before a valid verifier result",
+      "estimatedCostUsd": null,
+      "actualCostUsd": null
+    },
+    {
+      "path": "prove-plus-comm-full-dev-flow-formal-1/prove-plus-comm__szf4e29",
+      "includeInComparison": false,
+      "failureCategory": "infrastructure-invalid",
+      "invalidReason": "bridge did not source NVM and node exited 127 before the model run",
+      "estimatedCostUsd": null,
+      "actualCostUsd": null
+    },
+    {
+      "path": "prove-plus-comm-full-dev-flow-formal-2/prove-plus-comm__W5bC7Ww",
+      "includeInComparison": false,
+      "failureCategory": "configuration-invalid",
+      "invalidReason": "deterministic test incorrectly required a clean Git tree after the agent changed the proof",
+      "estimatedCostUsd": null,
+      "actualCostUsd": null
+    }
+  ]
+}

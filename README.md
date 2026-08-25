@@ -23,6 +23,7 @@ approved spec / handoff
   → deterministic risk floor + Luna classifier
   → isolated implementation
   → actual diff reclassification
+  → public build-output evidence (optional)
   → deterministic tests
   → isolated review
   → fix / escalate / needs_spec
@@ -108,7 +109,8 @@ See [Mobile and Pi entry point](docs/modules/mobile-entrypoint.md) for session-p
 - Every role gets a new Pi session; reviewers do not inherit the implementer's conversation.
 - `decisions.json` preserves findings and implementer responses across cycles.
 - Test outcomes are determined by shell exit codes.
-- A run allows up to three repair rounds and four implementation attempts; repeated identical failures stop early.
+- `RepoConfig.publicChecks` can run shell-free public argv checks at baseline and after each implementation cycle, producing bounded and sanitized `build-evidence-1` artifacts for reviewers. Baseline task-outcome failures are observed; execution failures fail closed; cycle-level blocking failures request another implementation attempt.
+- `maxCycles` counts all implementation attempts, including the first, and defaults to 4; repeated identical failures stop early.
 - The default is `max-tier 1`; Tier 2 adds a Terra reviewer and Sol final review.
 - Every run writes its diff, tests, routing, cost, and `report.md` under `.orchestrator/runs/`.
 
@@ -174,6 +176,7 @@ The GitHub **Dev-flow task** template starts with `status: draft`. Complete all 
 
 - The implementer gets read/write/edit/bash tools; reviewers get read/grep/find/ls only. This is a tool allowlist, not an OS sandbox.
 - Test commands in an approved spec are executed by a shell. Approval is not sandboxing, so specs must come from trusted sources.
+- Public build evidence checks use direct argv spawning, repository-relative working directories, timeouts, output caps, and constrained literal/regex diagnostics. They do not read hidden verifier output or publish auth, prompts, sessions, or secrets; they are not an OS sandbox. The external Harbor verifier remains the benchmark acceptance boundary.
 - `scope.include/exclude` is a prompt and review contract, not deterministic path enforcement.
 - The GitHub queue protects worktree creation with a repository allowlist, workspace containment, origin matching, remote SHA verification, and atomic claims. A human must explicitly onboard each new repository; onboarding verifies a queue-addressable checkout and SSH origin, and never authorizes an Issue.
 - The stale scan checks only open `dev-flow-running` Issues in allowlisted repositories. It trusts claim comments only when they were posted by the verified worker identity and match the local `claim.json`, while remaining compatible with the legacy claim format. Because markers and fixed text can be copied, author identity and ledger matching are required gates. The scan only adds `dev-flow-needs-human` and a reminder comment; it never recovers work, changes existing labels, worktrees, branches, or claim refs, or infers process liveness.

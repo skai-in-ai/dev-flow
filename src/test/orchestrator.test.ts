@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { applyTierCap, excludeLedger, formatTests, meaningfulStatus, Orchestrator } from "../orchestrator.js";
 import type { AgentRunner, AgentRunRequest, AgentRunResult } from "../agents/contracts.js";
 import type { CommandRunner, TestResult } from "../test-runner.js";
+import type { PublicCheck, PublicEvidenceArtifact, PublicEvidenceExecutor } from "../public-evidence-runner.js";
 
 const exec = promisify(execFile);
 async function repo(): Promise<string> { const dir = await mkdtemp(join(tmpdir(), "orch-repo-")); await exec("git", ["init"], { cwd: dir }); await exec("git", ["config", "user.email", "test@example.com"], { cwd: dir }); await exec("git", ["config", "user.name", "Test"], { cwd: dir }); await writeFile(join(dir, "a.ts"), "export const a = 1;\n"); await exec("git", ["add", "."], { cwd: dir }); await exec("git", ["commit", "-m", "base"], { cwd: dir }); return dir; }
@@ -15,6 +16,51 @@ class FakeAgents implements AgentRunner { calls: AgentRunRequest[] = []; constru
 class PassingTests implements CommandRunner { async run(command: string): Promise<TestResult> { return { command, passed: true, output: "ok", exitCode: 0 }; } }
 async function latestRun(path: string): Promise<string> { const runs = await readdir(join(path, ".orchestrator", "runs")); return runs.sort().at(-1)!; }
 const handoff = (path: string) => ({ repo: path, objective: "normal change", scope: { include: ["a.ts"] }, acceptanceCriteria: ["works"], constraints: [], tests: ["true"], riskNotes: [], delivery: { mode: "direct_main" as const, requireApproval: true } });
+const publicCheck: PublicCheck = { id: "public", command: ["true"], cwd: ".", timeoutSeconds: 1, expectedExitCodes: [0], required: true, mode: "blocking", stdoutMaxBytes: 64, stderrMaxBytes: 64 };
+function publicEvidence(phase: "baseline" | "cycle", cycle: number | null, blockingFailures = 0, failureKind: "none" | "task-outcome" | "execution" = blockingFailures ? "task-outcome" : "none"): PublicEvidenceArtifact {
+  return { schemaVersion: "build-evidence-1", phase, cycle, checks: [{ id: "public", required: true, mode: "blocking", status: blockingFailures ? "failed" : "passed", failureKind, durationMs: 1, exitCode: blockingFailures ? 1 : 0, timedOut: failureKind === "execution", truncated: { stdout: false, stderr: false }, diagnostics: [], output: { stdoutExcerpt: "", stderrExcerpt: "" }, evidenceRef: `build-evidence-${phase}${cycle === null ? "" : `-cycle-${cycle}`}.json#checks[0]` }], summary: { passed: blockingFailures ? 0 : 1, failed: blockingFailures, timedOut: failureKind === "execution" ? 1 : 0, blockingFailures, blockingOutcomeFailures: failureKind === "task-outcome" ? blockingFailures : 0, infrastructureFailures: failureKind === "execution" ? 1 : 0, observedFailures: 0 } };
+}
+class FakePublicEvidence implements PublicEvidenceExecutor {
+  calls: Array<{ phase: "baseline" | "cycle"; cycle: number | null }> = [];
+  constructor(private readonly results: number[] = []) {}
+  async run(_repo: string, _checks: readonly PublicCheck[], phase: "baseline" | "cycle", cycle: number | null): Promise<PublicEvidenceArtifact> { this.calls.push({ phase, cycle }); const result = this.results.shift() ?? 0; return publicEvidence(phase, cycle, result === -1 ? 1 : result, result === -1 ? "execution" : undefined); }
+}
+
+test("public evidence runs at baseline and after each implementation, and reviewer receives bounded summary", async () => {
+  const path = await repo(); const evidence = new FakePublicEvidence();
+  const agents = new FakeAgents([{ summary: "impl" }, { summary: "VERDICT: pass", verdict: "pass" }]);
+  const outcome = await new Orchestrator({ agents, tests: new PassingTests(), publicEvidence: evidence, config: { publicChecks: [publicCheck] } }).run(handoff(path), () => {});
+  assert.equal(outcome.status, "ready_for_main");
+  assert.deepEqual(evidence.calls, [{ phase: "baseline", cycle: null }, { phase: "cycle", cycle: 1 }]);
+  assert.match(agents.calls.find((call) => call.role === "reviewer")?.artifacts.public_evidence ?? "", /build-evidence-1/);
+  const root = join(path, ".orchestrator", "runs", await latestRun(path));
+  assert.match(await readFile(join(root, "build-evidence-baseline.json"), "utf8"), /"schemaVersion": "build-evidence-1"/);
+  assert.match(await readFile(join(root, "build-evidence-cycle-1.json"), "utf8"), /"cycle": 1/);
+});
+
+test("baseline blocking public evidence fails closed before agents, while observe failures do not", async () => {
+  const blockedPath = await repo(); const blockedEvidence = new FakePublicEvidence([-1]); const blockedAgents = new FakeAgents([]);
+  const blocked = await new Orchestrator({ agents: blockedAgents, tests: new PassingTests(), publicEvidence: blockedEvidence, config: { publicChecks: [publicCheck] } }).run(handoff(blockedPath), () => {});
+  assert.equal(blocked.status, "needs_human"); assert.equal(blockedAgents.calls.length, 0); assert.match(blocked.error ?? "", /untouched baseline/);
+
+  const taskFailurePath = await repo(); const taskFailureEvidence = new FakePublicEvidence([1, 0]);
+  const taskFailureAgents = new FakeAgents([{ summary: "impl" }, { summary: "VERDICT: pass", verdict: "pass" }]);
+  const taskFailure = await new Orchestrator({ agents: taskFailureAgents, tests: new PassingTests(), publicEvidence: taskFailureEvidence, config: { publicChecks: [publicCheck] } }).run(handoff(taskFailurePath), () => {});
+  assert.equal(taskFailure.status, "ready_for_main"); assert.equal(taskFailureAgents.calls.length, 2, "normal baseline task failure must not be classified as infrastructure");
+
+  const observePath = await repo(); const observeCheck = { ...publicCheck, mode: "observe" as const }; const observeEvidence = new FakePublicEvidence();
+  const observeAgents = new FakeAgents([{ summary: "impl" }, { summary: "VERDICT: pass", verdict: "pass" }]);
+  const observe = await new Orchestrator({ agents: observeAgents, tests: new PassingTests(), publicEvidence: observeEvidence, config: { publicChecks: [observeCheck] } }).run(handoff(observePath), () => {});
+  assert.equal(observe.status, "ready_for_main");
+});
+
+test("blocking public evidence failure is a cycle finding and can recover on the next cycle", async () => {
+  const path = await repo(); const evidence = new FakePublicEvidence([0, 1, 0]);
+  const agents = new FakeAgents([{ summary: "impl 1" }, { summary: "impl 2" }, { summary: "VERDICT: pass", verdict: "pass" }]);
+  const outcome = await new Orchestrator({ agents, tests: new PassingTests(), publicEvidence: evidence, config: { publicChecks: [publicCheck], maxCycles: 2 } }).run(handoff(path), () => {});
+  assert.equal(outcome.status, "ready_for_main"); assert.equal(outcome.cycles, 2); assert.deepEqual(evidence.calls.map((call) => call.phase), ["baseline", "cycle", "cycle"]);
+  assert.match(agents.calls.find((call) => call.role === "implementer" && call !== agents.calls[0])?.artifacts.findings ?? "", /public check public/);
+});
 
 test("review escalation upgrades checks without re-running implementation or consuming a round", async () => {
   const path = await repo(); const agents = new FakeAgents([{ summary: "implemented" }, { summary: "VERDICT: escalate", verdict: "escalate" }, { summary: "VERDICT: pass", verdict: "pass" }, { summary: "VERDICT: pass", verdict: "pass" }]);

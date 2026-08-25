@@ -1,0 +1,60 @@
+{
+  "schemaVersion": "task-compatibility-1",
+  "taskId": "terminal-bench@2.0/large-scale-text-editing",
+  "taskName": "large-scale-text-editing",
+  "datasetRef": "terminal-bench@2.0",
+  "datasetRevision": "2.0",
+  "taskRef": "large-scale-text-editing",
+  "taskDigest": "08a8365bda665184cefa526d1ca3a94bf3d4e8f9f01fd09c3f204aa3fa5b67b6",
+  "workspaceKind": "git-repo",
+  "requiresGitRepo": true,
+  "requiresCleanTree": true,
+  "agentWorkdir": "/app",
+  "testsVisibleToAgent": true,
+  "verifierMode": "shared",
+  "internetAllowed": false,
+  "fullDevFlowCompatible": true,
+  "allowLocalCommit": false,
+  "incompatibilityReasons": [],
+  "deterministicTests": [
+    "test -f input.csv && test -f expected.csv && test -x \"$(command -v vim)\" && test \"$(git rev-parse --show-toplevel)\" = /app"
+  ],
+  "scopeInclude": ["apply_macros.vim"],
+  "scopeExclude": ["input.csv", "expected.csv", "gen_large_csv.py"],
+  "acceptanceCriteria": [
+    "The unchanged external Harbor verifier passes and input.csv matches the generated expected.csv after the macro script runs.",
+    "apply_macros.vim contains the requested non-empty macros and is the only task output modified by the agent."
+  ],
+  "riskNotes": [
+    "This is a local workspace-compatible derivative of terminal-bench@2.0; only environment/Dockerfile adds Git and commits generated task inputs as the clean baseline.",
+    "The deterministic command is a public input/tool/Git-root invariant and is not a substitute for the external verifier.",
+    "The task instruction and visible tests require headless Vim; no hidden verifier output is used as agent feedback.",
+    "allowLocalCommit is false; commits, pushes, merges, deploys, and external mutation remain forbidden."
+  ],
+  "artifactRoot": "/logs/artifacts",
+  "agentLogDir": "/logs/agent/full-dev-flow",
+  "maxTier": 1,
+  "model": "gpt-5.6-luna",
+  "reasoningEffort": "medium",
+  "timeoutSeconds": 1200,
+  "trialCount": 1,
+  "configStatus": "prepared-no-trial",
+  "sourceProvenance": {
+    "sourceRoot": "/private/tmp/terminal-bench-2.0-full/terminal-bench/large-scale-text-editing",
+    "sourceRevision": "terminal-bench@2.0 (local extracted source; upstream commit not present)",
+    "sourceCanonicalSha256": "e7187d8cd2ba2b54fe05b2b35d995d75762c36d3f4d9a110fb5fee0b015a029f",
+    "derivativeRoot": "/private/tmp/terminal-bench-formal/large-scale-text-editing",
+    "derivativeCanonicalSha256": "08a8365bda665184cefa526d1ca3a94bf3d4e8f9f01fd09c3f204aa3fa5b67b6",
+    "canonicalDigestRule": "sorted relative path + TAB + file SHA-256 + LF over all files",
+    "preservedByteForByte": [
+      "instruction.md",
+      "tests/test.sh",
+      "tests/test_outputs.py",
+      "solution/solve.sh",
+      "task.toml",
+      "environment/gen_large_csv.py",
+      "environment/tests/gen_large_csv.py",
+      "environment/tests/test_outputs.py"
+    ]
+  }
+}

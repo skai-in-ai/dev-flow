@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Offline Harbor artifact aggregation. It never starts Harbor, Docker, or a model.
+set -euo pipefail
+ORCHESTRATOR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+npm --prefix "$ORCHESTRATOR" run --silent build
+exec node "$ORCHESTRATOR/dist/benchmark/aggregate.js" "$@"

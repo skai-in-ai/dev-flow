@@ -2,3 +2,5 @@ node_modules/
 dist/
 .orchestrator/
 .pi/
+__pycache__/
+*.py[cod]

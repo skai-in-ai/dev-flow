@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import type { Tier } from "./agents/contracts.js";
+import type { PublicCheck } from "./public-evidence-runner.js";
 
 export interface Handoff {
   repo: string;
@@ -19,7 +20,9 @@ export interface RepoConfig {
   tests?: string[];
   testsByTier?: Partial<Record<Tier, string[]>>;
   riskPaths?: Record<string, Tier>;
-  /** 因失敗而重新實作的次數上限；未設定時採 DEFAULT_MAX_FIX_CYCLES。 */
+  /** 整個 workflow 最多允許的 implementation 次數（包含第一次）；未設定時為 4。 */
+  maxCycles?: number;
+  /** @deprecated 舊 retry count alias；只可單獨使用，會轉成 maxCycles=maxFixCycles+1。 */
   maxFixCycles?: number;
   /**
    * 略過「在乾淨 baseline 上先跑一次測試」的預檢。
@@ -28,6 +31,8 @@ export interface RepoConfig {
    * 只有在測試本身昂貴且環境確定穩定時才值得關掉。
    */
   skipPreflight?: boolean;
+  /** 公開 build/test 證據；未設定時維持既有流程。 */
+  publicChecks?: PublicCheck[];
 }
 
 export async function loadHandoff(path: string): Promise<Handoff> {

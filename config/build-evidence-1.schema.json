@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agent-orchestrator/build-evidence-1",
+  "title": "Sanitized public build-output evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "phase", "cycle", "checks", "summary"],
+  "properties": {
+    "schemaVersion": { "const": "build-evidence-1" },
+    "phase": { "enum": ["baseline", "cycle"] },
+    "cycle": { "type": ["integer", "null"], "minimum": 1 },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "required", "mode", "status", "failureKind", "durationMs", "exitCode", "timedOut", "truncated", "diagnostics", "output", "evidenceRef"],
+        "properties": {
+          "id": { "type": "string" },
+          "required": { "type": "boolean" },
+          "mode": { "enum": ["observe", "blocking"] },
+          "status": { "enum": ["passed", "failed", "timed_out"] },
+          "failureKind": { "enum": ["none", "task-outcome", "execution"] },
+          "durationMs": { "type": "integer", "minimum": 0 },
+          "exitCode": { "type": ["integer", "null"], "minimum": 0, "maximum": 255 },
+          "timedOut": { "type": "boolean" },
+          "truncated": { "type": "object", "additionalProperties": false, "required": ["stdout", "stderr"], "properties": { "stdout": { "type": "boolean" }, "stderr": { "type": "boolean" } } },
+          "diagnostics": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["id", "kind", "matchCount"], "properties": { "id": { "type": "string" }, "kind": { "enum": ["literal", "regex"] }, "matchCount": { "type": "integer", "minimum": 1, "maximum": 1000 } } } },
+          "output": { "type": "object", "additionalProperties": false, "required": ["stdoutExcerpt", "stderrExcerpt"], "properties": { "stdoutExcerpt": { "type": "string" }, "stderrExcerpt": { "type": "string" } } },
+          "evidenceRef": { "type": "string" }
+        }
+      }
+    },
+    "summary": { "type": "object", "additionalProperties": false, "required": ["passed", "failed", "timedOut", "blockingFailures", "blockingOutcomeFailures", "infrastructureFailures", "observedFailures"], "properties": { "passed": { "type": "integer", "minimum": 0 }, "failed": { "type": "integer", "minimum": 0 }, "timedOut": { "type": "integer", "minimum": 0 }, "blockingFailures": { "type": "integer", "minimum": 0 }, "blockingOutcomeFailures": { "type": "integer", "minimum": 0 }, "infrastructureFailures": { "type": "integer", "minimum": 0 }, "observedFailures": { "type": "integer", "minimum": 0 } } }
+  }
+}

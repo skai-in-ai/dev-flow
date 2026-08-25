@@ -1,0 +1,78 @@
+{
+  "schemaVersion": "benchmark-run-manifest-1",
+  "artifactRoot": { "env": "HARBOR_BENCHMARK_ARTIFACT_ROOT" },
+  "artifacts": [
+    {
+      "path": "harbor-fresh-cycle-caps-amendment/fresh-caps-amendment-large-scale-text-editing-codex/large-scale-text-editing__huSnQx8",
+      "includeInComparison": true,
+      "failureCategory": null,
+      "invalidReason": null,
+      "estimatedCostUsd": 0.00103608,
+      "actualCostUsd": null
+    },
+    {
+      "path": "harbor-fresh-cycle-caps-amendment/fresh-caps-amendment-large-scale-text-editing-single-pi/large-scale-text-editing__QY97A8b",
+      "includeInComparison": true,
+      "failureCategory": null,
+      "invalidReason": null,
+      "estimatedCostUsd": 0.015282,
+      "actualCostUsd": null
+    },
+    {
+      "path": "harbor-fresh-cycle-caps-amendment/fresh-caps-amendment-large-scale-text-editing-full-cap1/large-scale-text-editing__HTtHxLE",
+      "includeInComparison": true,
+      "failureCategory": null,
+      "invalidReason": null,
+      "estimatedCostUsd": 0.0211694,
+      "actualCostUsd": null
+    },
+    {
+      "path": "harbor-fresh-cycle-caps-amendment/fresh-caps-amendment-large-scale-text-editing-full-cap3/large-scale-text-editing__8Ky3QFv",
+      "includeInComparison": true,
+      "failureCategory": null,
+      "invalidReason": null,
+      "estimatedCostUsd": 0.011188,
+      "actualCostUsd": null
+    },
+    {
+      "path": "harbor-fresh-cycle-caps-amendment/fresh-caps-amendment-large-scale-text-editing-codex-diagnostic-retry1/large-scale-text-editing__smBcgCT",
+      "includeInComparison": false,
+      "failureCategory": "task-failure",
+      "invalidReason": "Diagnostic retry only: task-compliance failure (verifier 4/5); excluded from preregistered primary comparison and does not replace the original Codex baseline.",
+      "estimatedCostUsd": 0.02155956,
+      "actualCostUsd": null
+    },
+    {
+      "path": "harbor-fresh-cycle-caps-amendment/fresh-caps-amendment-sqlite-db-truncate-codex/sqlite-db-truncate__VRisi96",
+      "includeInComparison": true,
+      "failureCategory": null,
+      "invalidReason": null,
+      "estimatedCostUsd": 0.00774308,
+      "actualCostUsd": null
+    },
+    {
+      "path": "harbor-fresh-cycle-caps-amendment/fresh-caps-amendment-sqlite-db-truncate-single-pi/sqlite-db-truncate__y3jwc4M",
+      "includeInComparison": true,
+      "failureCategory": null,
+      "invalidReason": null,
+      "estimatedCostUsd": 0.0316038,
+      "actualCostUsd": null
+    },
+    {
+      "path": "harbor-fresh-cycle-caps-amendment/fresh-caps-amendment-sqlite-db-truncate-full-cap1/sqlite-db-truncate__T8ZudnH",
+      "includeInComparison": true,
+      "failureCategory": null,
+      "invalidReason": null,
+      "estimatedCostUsd": 0.0158966,
+      "actualCostUsd": null
+    },
+    {
+      "path": "harbor-fresh-cycle-caps-amendment/fresh-caps-amendment-sqlite-db-truncate-full-cap3/sqlite-db-truncate__3HnMjLW",
+      "includeInComparison": true,
+      "failureCategory": null,
+      "invalidReason": null,
+      "estimatedCostUsd": 0.0138484,
+      "actualCostUsd": null
+    }
+  ]
+}
