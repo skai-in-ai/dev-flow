@@ -1,7 +1,7 @@
 # Terminal-Bench telemetry canary
 
-日期：2026-08-22  
-任務：`prove-plus-comm` derivative  
+日期：2026-08-22
+任務：`prove-plus-comm` derivative
 用途：驗證 `benchmark-trial-2` telemetry；不是新的成功率樣本或 leaderboard 結論。
 
 ## 有效結果

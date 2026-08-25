@@ -3,9 +3,9 @@
 本批實測後的長期學習、基礎設施缺口、gate provenance 與未決事項，集中維護於
 [Terminal-Bench / dev-flow 實測學習與決策 backlog](terminal-bench-learnings-backlog.md)。
 
-日期：2026-08-22  
-Harbor：`0.20.0`  
-artifact dataset ref：`terminal-bench@2.0`（本報告不把它宣稱為另一個 dataset 版本）  
+日期：2026-08-22
+Harbor：`0.20.0`
+artifact dataset ref：`terminal-bench@2.0`（本報告不把它宣稱為另一個 dataset 版本）
 有效比較：5 題 × 3 harness = 15 trials；另有 6 個被明確排除的 invalid attempts。
 
 這是每題一次的 smoke comparison，不是重複試驗。因此可以報告本批的

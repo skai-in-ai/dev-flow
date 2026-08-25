@@ -1,8 +1,8 @@
 # prove-plus-comm first three-harness comparison
 
-Date: 2026-08-21  
-Task: official `terminal-bench@2.0` `prove-plus-comm` derivative  
-Derivative: `/private/tmp/terminal-bench-formal/prove-plus-comm`  
+Date: 2026-08-21
+Task: official `terminal-bench@2.0` `prove-plus-comm` derivative
+Derivative: `/private/tmp/terminal-bench-formal/prove-plus-comm`
 Derivative canonical SHA-256:
 `20d5b530a07a7ee58f56cbd70e4f123b2371522658f5c5a3dc8aeebf83cf9095`
 
