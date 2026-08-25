@@ -1,0 +1,58 @@
+{
+  "schemaVersion": "task-compatibility-1",
+  "taskId": "terminal-bench@2.0/sqlite-db-truncate",
+  "taskName": "sqlite-db-truncate",
+  "datasetRef": "terminal-bench@2.0",
+  "datasetRevision": "2.0",
+  "taskRef": "sqlite-db-truncate",
+  "taskDigest": "a2eb562c10ca1274541e5d74c9a995142a54e39bd267b30e661dfb04f42de15f",
+  "workspaceKind": "git-repo",
+  "requiresGitRepo": true,
+  "requiresCleanTree": true,
+  "agentWorkdir": "/app",
+  "testsVisibleToAgent": true,
+  "verifierMode": "shared",
+  "internetAllowed": false,
+  "fullDevFlowCompatible": true,
+  "allowLocalCommit": false,
+  "incompatibilityReasons": [],
+  "deterministicTests": [
+    "test -f trunc.db && test -x \"$(command -v python3)\" && test \"$(git rev-parse --show-toplevel)\" = /app"
+  ],
+  "scopeInclude": ["recover.json"],
+  "scopeExclude": ["trunc.db"],
+  "acceptanceCriteria": [
+    "The unchanged external Harbor verifier passes and recover.json contains the required recovered rows in the documented JSON shape.",
+    "The supplied truncated database remains available as the immutable task input."
+  ],
+  "riskNotes": [
+    "This is a local workspace-compatible derivative of terminal-bench@2.0; only environment/Dockerfile adds Git and commits trunc.db as the clean baseline.",
+    "The deterministic command is a public input/tool/Git-root invariant and is not a substitute for the external verifier.",
+    "The database is treated as task input; no solution or hidden expected output was inspected during preparation.",
+    "allowLocalCommit is false; commits, pushes, merges, deploys, and external mutation remain forbidden."
+  ],
+  "artifactRoot": "/logs/artifacts",
+  "agentLogDir": "/logs/agent/full-dev-flow",
+  "maxTier": 1,
+  "model": "gpt-5.6-luna",
+  "reasoningEffort": "medium",
+  "timeoutSeconds": 900,
+  "trialCount": 1,
+  "configStatus": "prepared-no-trial",
+  "sourceProvenance": {
+    "sourceRoot": "/private/tmp/terminal-bench-2.0-full/terminal-bench/sqlite-db-truncate",
+    "sourceRevision": "terminal-bench@2.0 (local extracted source; upstream commit not present)",
+    "sourceCanonicalSha256": "efe3233e30ed011eed5f838570dd6be924d59440600787c6180d914a3f2f386b",
+    "derivativeRoot": "/private/tmp/terminal-bench-formal/sqlite-db-truncate",
+    "derivativeCanonicalSha256": "a2eb562c10ca1274541e5d74c9a995142a54e39bd267b30e661dfb04f42de15f",
+    "canonicalDigestRule": "sorted relative path + TAB + file SHA-256 + LF over all files",
+    "preservedByteForByte": [
+      "instruction.md",
+      "tests/test.sh",
+      "tests/test_outputs.py",
+      "solution/solve.sh",
+      "task.toml",
+      "environment/trunc.db"
+    ]
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "schemaVersion": "task-compatibility-1",
+  "taskId": "terminal-bench@2.0/polyglot-c-py",
+  "taskName": "polyglot-c-py",
+  "datasetRef": "terminal-bench@2.0",
+  "datasetRevision": "2.0",
+  "taskRef": "polyglot-c-py",
+  "taskDigest": "181d54b4308aff50f4814232d369e78f314ba6de7874d6230bd64883c20ba10f",
+  "workspaceKind": "git-repo",
+  "requiresGitRepo": true,
+  "requiresCleanTree": true,
+  "agentWorkdir": "/app",
+  "testsVisibleToAgent": true,
+  "verifierMode": "shared",
+  "internetAllowed": true,
+  "fullDevFlowCompatible": true,
+  "allowLocalCommit": false,
+  "incompatibilityReasons": [],
+  "deterministicTests": [
+    "test -d /app && test -x \"$(command -v gcc)\" && test \"$(git rev-parse --show-toplevel)\" = /app"
+  ],
+  "scopeInclude": ["polyglot/main.py.c"],
+  "scopeExclude": [],
+  "acceptanceCriteria": [
+    "The unchanged external Harbor verifier passes when the single polyglot file runs under Python and compiles under gcc.",
+    "polyglot/main.py.c is the only expected task output."
+  ],
+  "riskNotes": [
+    "The derivative changes only environment/Dockerfile to install git and create the clean /app baseline.",
+    "The task verifier may install Python tooling and is the acceptance check, not the deterministic infrastructure test.",
+    "allowLocalCommit is false because comparison review evidence is working-tree based."
+  ],
+  "artifactRoot": "/logs/artifacts",
+  "agentLogDir": "/logs/agent/full-dev-flow",
+  "maxTier": 1,
+  "model": "gpt-5.6-luna",
+  "reasoningEffort": "medium",
+  "timeoutSeconds": 900,
+  "trialCount": 1,
+  "configStatus": "prepared-no-trial",
+  "sourceProvenance": {
+    "sourceRoot": "/private/tmp/terminal-bench-2.0-full/terminal-bench/polyglot-c-py",
+    "sourceRevision": "terminal-bench@2.0 (local extracted source; upstream commit not present)",
+    "sourceCanonicalSha256": "59a0d0aa1b244b442ce831a502483a3f643643da4a9290621a7492663ef6118e",
+    "derivativeRoot": "/private/tmp/terminal-bench-formal/polyglot-c-py",
+    "derivativeCanonicalSha256": "181d54b4308aff50f4814232d369e78f314ba6de7874d6230bd64883c20ba10f",
+    "canonicalDigestRule": "sorted relative path + TAB + file SHA-256 + LF over all files",
+    "preservedByteForByte": ["instruction.md", "tests/test.sh", "tests/test_outputs.py", "solution/solve.sh", "task.toml"]
+  }
+}

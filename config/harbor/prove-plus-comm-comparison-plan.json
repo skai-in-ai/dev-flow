@@ -1,0 +1,190 @@
+{
+  "schemaVersion": "harbor-comparison-plan-1",
+  "status": "stage2-five-task-prepared-no-trial",
+  "resultReport": "docs/benchmarks/harbor-prove-plus-comm-first-comparison.md",
+  "resultPolicy": "three valid one-trial rewards recorded; no success-rate or reliability inference",
+  "stage2Plan": "config/harbor/terminal-bench-stage2-five-task-run-plan.md",
+  "harborVersion": "0.20.0",
+  "source": {
+    "dataset": "terminal-bench@2.0",
+    "task": "prove-plus-comm",
+    "sourceRoot": "/private/tmp/terminal-bench-2.0-full/terminal-bench/prove-plus-comm",
+    "sourceCanonicalSha256": "20cac351f7b92a7002b1159f05bd35a71116bc1610257c3ad778b3d9c2ee4428",
+    "derivativeRoot": "/private/tmp/terminal-bench-formal/prove-plus-comm",
+    "derivativeCanonicalSha256": "20d5b530a07a7ee58f56cbd70e4f123b2371522658f5c5a3dc8aeebf83cf9095",
+    "environmentOnlyChange": [
+      "Install git alongside Coq.",
+      "Initialize /workspace as a clean Git repository after copying plus_comm.v and create one local baseline commit."
+    ],
+    "preservedByteForByte": ["instruction.md", "tests/test.sh", "tests/test_outputs.py", "solution/solve.sh", "task.toml", "environment/partial_proof.v"]
+  },
+  "taskContract": {
+    "workspace": "/workspace",
+    "verifier": "tests/test.sh (shared, unchanged)",
+    "verifierMode": "shared",
+    "requiresGitRepo": true,
+    "requiresCleanTree": true,
+    "scopeInclude": ["plus_comm.v", "plus_comm.vo"],
+    "scopeExclude": [],
+    "deterministicInfrastructureTest": "test -f plus_comm.v && test -x \"$(command -v coqc)\" && test \"$(git rev-parse --show-toplevel)\" = /workspace",
+    "acceptance": "Run the external verifier only after the agent produces the completed proof and plus_comm.vo.",
+    "allowLocalCommit": false
+  },
+  "comparison": {
+    "model": "gpt-5.6-luna",
+    "reasoningEffort": "medium",
+    "timeoutSeconds": 900,
+    "trialCount": 1,
+    "maxRetries": 0,
+    "concurrentTrials": 1,
+    "sessionMode": "fresh",
+    "maxTier": 1,
+    "verifier": "same derivative task and unmodified tests/test.sh for every harness",
+    "harnesses": [
+      {"id": "harbor-codex", "agent": "codex", "status": "runnable-with-explicit-Codex-auth"},
+      {"id": "single-pi", "agent": "harbor_full_dev_flow.agent:SinglePiSubscriptionAgent", "status": "runnable-with-explicit-Pi-auth", "package": "@earendil-works/pi-coding-agent@0.82.1"},
+      {"id": "full-dev-flow", "agent": "harbor_full_dev_flow.agent:FullDevFlowAgent", "status": "runnable-with-explicit-Pi-auth"}
+    ]
+  },
+  "telemetryPolicy": {
+    "record": ["harness", "model", "reasoningEffort", "trialCount", "timeoutSeconds", "tokens", "cacheTokens", "duration", "reward", "verifierStatus", "failureCategory"],
+    "neverRecord": ["auth contents", "auth path", "provider tokens", "raw prompt outside allowlisted artifact contract"],
+    "costPolicy": "actual or estimated cost only with explicit billing/pricing evidence; otherwise null"
+  },
+  "fullDevFlowConfig": {
+    "path": "config/harbor/prove-plus-comm-full-dev-flow-compatibility.json",
+    "status": "valid-rerun-after-formal-2-infrastructure-invalid",
+    "configSha256": "129b76505d0cb6c33e3c4db4fe927d2d93df11ca38b63e3867ccf48cb51ef8e2",
+    "taskDigest": "20d5b530a07a7ee58f56cbd70e4f123b2371522658f5c5a3dc8aeebf83cf9095",
+    "deterministicTestsPolicy": "wrapper preflight owns clean-tree validation; task test checks file, coqc, and exact Git root only"
+  },
+  "invalidAttempts": [
+    {
+      "harness": "full-dev-flow",
+      "attempt": "formal-2",
+      "artifactRoot": "/private/tmp/harbor-first-formal-comparison/prove-plus-comm-full-dev-flow-formal-2",
+      "status": "configuration-invalid",
+      "externalReward": 1,
+      "includeInComparison": false,
+      "reason": "deterministic test required post-run clean-tree state, so the config could not pass its own baseline contract"
+    },
+    {
+      "harness": "single-pi",
+      "attempt": "formal-1",
+      "artifactRoot": "/private/tmp/harbor-first-formal-comparison/prove-plus-comm-single-pi-formal-1",
+      "status": "infrastructure-invalid",
+      "includeInComparison": false,
+      "reason": "auth cleanup incorrectly failed after the model command completed"
+    },
+    {
+      "harness": "single-pi",
+      "attempt": "formal-2",
+      "artifactRoot": "/private/tmp/harbor-first-formal-comparison/prove-plus-comm-single-pi-formal-2",
+      "status": "infrastructure-invalid",
+      "includeInComparison": false,
+      "reason": "Docker/TLS infrastructure failure"
+    },
+    {
+      "harness": "full-dev-flow",
+      "attempt": "formal-1",
+      "artifactRoot": "/private/tmp/harbor-first-formal-comparison/prove-plus-comm-full-dev-flow-formal-1",
+      "status": "infrastructure-invalid",
+      "includeInComparison": false,
+      "reason": "bridge command did not source NVM and node exited 127"
+    }
+  ],
+  "validResults": [
+    {
+      "harness": "harbor-codex",
+      "artifactRoot": "/private/tmp/harbor-first-formal-comparison/prove-plus-comm-codex-formal-1",
+      "reward": 1,
+      "exceptions": 0,
+      "includeInComparison": true
+    },
+    {
+      "harness": "single-pi",
+      "artifactRoot": "/private/tmp/harbor-first-formal-comparison/prove-plus-comm-single-pi-formal-3",
+      "reward": 1,
+      "exceptions": 0,
+      "includeInComparison": true
+    },
+    {
+      "harness": "full-dev-flow",
+      "artifactRoot": "/private/tmp/harbor-first-formal-comparison/prove-plus-comm-full-dev-flow-formal-3",
+      "reward": 1,
+      "exceptions": 0,
+      "includeInComparison": true,
+      "telemetryNote": "router usage was missing from captured telemetry; fixed for future runs without rerunning"
+    }
+  ],
+  "stage2FiveTaskSmoke": {
+    "status": "prepared-no-trial",
+    "taskCount": 5,
+    "existingTask": "prove-plus-comm",
+    "policy": {
+      "harborVersion": "0.20.0",
+      "dataset": "terminal-bench@2.0 (local extracted source)",
+      "model": "gpt-5.6-luna",
+      "reasoningEffort": "medium",
+      "maxTier": 1,
+      "timeoutSeconds": 900,
+      "trialCount": 1,
+      "maxRetries": 0,
+      "sessionMode": "fresh",
+      "allowLocalCommit": false,
+      "sameDerivativeForAllHarnesses": true,
+      "externalVerifier": "unchanged source tests/test.sh"
+    },
+    "tasks": [
+      {
+        "taskName": "prove-plus-comm",
+        "sourceRoot": "/private/tmp/terminal-bench-2.0-full/terminal-bench/prove-plus-comm",
+        "derivativeRoot": "/private/tmp/terminal-bench-formal/prove-plus-comm",
+        "derivativeSha256": "20d5b530a07a7ee58f56cbd70e4f123b2371522658f5c5a3dc8aeebf83cf9095",
+        "compatibilityManifest": "config/harbor/prove-plus-comm-full-dev-flow-compatibility.json"
+      },
+      {
+        "taskName": "overfull-hbox",
+        "sourceRoot": "/private/tmp/terminal-bench-2.0-full/terminal-bench/overfull-hbox",
+        "derivativeRoot": "/private/tmp/terminal-bench-formal/overfull-hbox",
+        "derivativeSha256": "2c20a07c54acefbe303074ef5a99e915fd8b86eecc3d232c248c6927b1dfa5d8",
+        "compatibilityManifest": "config/harbor/overfull-hbox-full-dev-flow-compatibility.json",
+        "workdir": "/app",
+        "scopeInclude": ["input.tex"]
+      },
+      {
+        "taskName": "regex-log",
+        "sourceRoot": "/private/tmp/terminal-bench-2.0-full/terminal-bench/regex-log",
+        "derivativeRoot": "/private/tmp/terminal-bench-formal/regex-log",
+        "derivativeSha256": "edfdccd39cc8ccd0385727bf0064af8bf431f975c79f79e2c408296aa168ff78",
+        "compatibilityManifest": "config/harbor/regex-log-full-dev-flow-compatibility.json",
+        "workdir": "/app",
+        "scopeInclude": ["regex.txt"]
+      },
+      {
+        "taskName": "log-summary-date-ranges",
+        "sourceRoot": "/private/tmp/terminal-bench-2.0-full/terminal-bench/log-summary-date-ranges",
+        "derivativeRoot": "/private/tmp/terminal-bench-formal/log-summary-date-ranges",
+        "derivativeSha256": "57a85f9dd3d746eedcb6bf815f61332024a16bef1169b8222f3ae37e666a9e8a",
+        "compatibilityManifest": "config/harbor/log-summary-date-ranges-full-dev-flow-compatibility.json",
+        "workdir": "/app",
+        "scopeInclude": ["summary.csv"]
+      },
+      {
+        "taskName": "polyglot-c-py",
+        "sourceRoot": "/private/tmp/terminal-bench-2.0-full/terminal-bench/polyglot-c-py",
+        "derivativeRoot": "/private/tmp/terminal-bench-formal/polyglot-c-py",
+        "derivativeSha256": "181d54b4308aff50f4814232d369e78f314ba6de7874d6230bd64883c20ba10f",
+        "compatibilityManifest": "config/harbor/polyglot-c-py-full-dev-flow-compatibility.json",
+        "workdir": "/app",
+        "scopeInclude": ["polyglot/main.py.c"]
+      }
+    ],
+    "validation": {
+      "derivativeOnlyEnvironmentDiff": true,
+      "sourceTaskFilesBytePreserved": true,
+      "printConfig": "passed for all three harnesses on all five derivatives; output discarded",
+      "modelTrial": "not run"
+    }
+  }
+}

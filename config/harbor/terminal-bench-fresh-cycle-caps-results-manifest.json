@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "benchmark-run-manifest-1",
+  "artifactRoot": { "env": "HARBOR_BENCHMARK_ARTIFACT_ROOT" },
+  "artifacts": [
+    {
+      "path": "harbor-fresh-cycle-caps/fresh-caps-large-scale-text-editing-codex/large-scale-text-editing__pej4e74",
+      "includeInComparison": false,
+      "failureCategory": "infrastructure-invalid",
+      "invalidReason": "Harbor Codex installation exceeded the locked 360-second agent setup timeout before model execution",
+      "estimatedCostUsd": null,
+      "actualCostUsd": null
+    }
+  ]
+}

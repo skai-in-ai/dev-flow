@@ -1,0 +1,130 @@
+{
+  "schemaVersion": "terminal-bench-cycle-cap-preregistration-1",
+  "status": "approved",
+  "createdAt": "2026-08-22T00:00:00+08:00",
+  "amendments": [
+    {
+      "id": "setup-timeout-multiplier-2",
+      "status": "approved",
+      "approvedAt": "2026-08-22T00:00:00+08:00",
+      "spec": ".agent/specs/2026-08-22-terminal-bench-fresh-cycle-caps-timeout-amendment.md",
+      "appliesTo": "all planned trials",
+      "agentSetupTimeoutMultiplier": 2,
+      "scope": "harbor-agent-setup-only",
+      "defaultSetupTimeoutSeconds": 360,
+      "effectiveSetupTimeoutSeconds": 720,
+      "doesNotChange": [
+        "task timeout",
+        "agent execution timeout",
+        "verifier timeout",
+        "model",
+        "reasoning",
+        "maxCycles",
+        "gates",
+        "Harbor retries",
+        "session mode",
+        "concurrency",
+        "budget"
+      ],
+      "historicalInvalidArtifactPolicy": "preserve-existing-manifest-and-artifact",
+      "newJobNamePrefix": "fresh-caps-amendment-",
+      "newArtifactRootRequired": true
+    }
+  ],
+  "dataset": {
+    "ref": "terminal-bench@2.0",
+    "revision": "2.0",
+    "sourceRevisionNote": "local extracted source; upstream commit not present"
+  },
+  "derivatives": [
+    {
+      "taskId": "terminal-bench@2.0/large-scale-text-editing",
+      "taskName": "large-scale-text-editing",
+      "path": "/private/tmp/terminal-bench-formal/large-scale-text-editing",
+      "compatibilityManifest": "config/harbor/large-scale-text-editing-full-dev-flow-compatibility.json",
+      "taskDigest": "08a8365bda665184cefa526d1ca3a94bf3d4e8f9f01fd09c3f204aa3fa5b67b6",
+      "agentWorkdir": "/app",
+      "timeoutSeconds": 1200
+    },
+    {
+      "taskId": "terminal-bench@2.0/sqlite-db-truncate",
+      "taskName": "sqlite-db-truncate",
+      "path": "/private/tmp/terminal-bench-formal/sqlite-db-truncate",
+      "compatibilityManifest": "config/harbor/sqlite-db-truncate-full-dev-flow-compatibility.json",
+      "taskDigest": "a2eb562c10ca1274541e5d74c9a995142a54e39bd267b30e661dfb04f42de15f",
+      "agentWorkdir": "/app",
+      "timeoutSeconds": 900
+    }
+  ],
+  "lockedRuntime": {
+    "harborVersion": "0.20.0",
+    "model": "gpt-5.6-luna",
+    "reasoningEffort": "medium",
+    "maxTier": 1,
+    "sessionMode": "fresh",
+    "harborRetries": 0,
+    "concurrency": 1,
+    "forceBuild": true,
+    "timeoutMultiplier": 1,
+    "agentExecutionTimeoutMultiplier": 1,
+    "verifierTimeoutMultiplier": 1,
+    "agentSetupTimeoutMultiplier": 2,
+    "internetAllowed": false,
+    "allowLocalCommit": false
+  },
+  "cyclePolicy": {
+    "meaning": "total workflow cycles, not implementation retries",
+    "conditions": [
+      { "harness": "harbor-codex", "maxCycles": null, "agentSetupTimeoutMultiplier": 2 },
+      { "harness": "single-pi", "maxCycles": null, "agentSetupTimeoutMultiplier": 2 },
+      { "harness": "full-dev-flow", "maxCycles": 1, "agentSetupTimeoutMultiplier": 2 },
+      { "harness": "full-dev-flow", "maxCycles": 3, "agentSetupTimeoutMultiplier": 2 }
+    ],
+    "freshTrialPerCondition": true,
+    "retryPolicy": "no Harbor retry; no cross-condition resume"
+  },
+  "plannedTrials": [
+    { "id": "large-scale-text-editing-codex", "taskName": "large-scale-text-editing", "harness": "harbor-codex", "maxCycles": null, "agentSetupTimeoutMultiplier": 2, "jobName": "fresh-caps-amendment-large-scale-text-editing-codex" },
+    { "id": "large-scale-text-editing-single-pi", "taskName": "large-scale-text-editing", "harness": "single-pi", "maxCycles": null, "agentSetupTimeoutMultiplier": 2, "jobName": "fresh-caps-amendment-large-scale-text-editing-single-pi" },
+    { "id": "large-scale-text-editing-full-cap1", "taskName": "large-scale-text-editing", "harness": "full-dev-flow", "maxCycles": 1, "agentSetupTimeoutMultiplier": 2, "jobName": "fresh-caps-amendment-large-scale-text-editing-full-cap1" },
+    { "id": "large-scale-text-editing-full-cap3", "taskName": "large-scale-text-editing", "harness": "full-dev-flow", "maxCycles": 3, "agentSetupTimeoutMultiplier": 2, "jobName": "fresh-caps-amendment-large-scale-text-editing-full-cap3" },
+    { "id": "sqlite-db-truncate-codex", "taskName": "sqlite-db-truncate", "harness": "harbor-codex", "maxCycles": null, "agentSetupTimeoutMultiplier": 2, "jobName": "fresh-caps-amendment-sqlite-db-truncate-codex" },
+    { "id": "sqlite-db-truncate-single-pi", "taskName": "sqlite-db-truncate", "harness": "single-pi", "maxCycles": null, "agentSetupTimeoutMultiplier": 2, "jobName": "fresh-caps-amendment-sqlite-db-truncate-single-pi" },
+    { "id": "sqlite-db-truncate-full-cap1", "taskName": "sqlite-db-truncate", "harness": "full-dev-flow", "maxCycles": 1, "agentSetupTimeoutMultiplier": 2, "jobName": "fresh-caps-amendment-sqlite-db-truncate-full-cap1" },
+    { "id": "sqlite-db-truncate-full-cap3", "taskName": "sqlite-db-truncate", "harness": "full-dev-flow", "maxCycles": 3, "agentSetupTimeoutMultiplier": 2, "jobName": "fresh-caps-amendment-sqlite-db-truncate-full-cap3" }
+  ],
+  "budget": {
+    "estimatedCostCeilingUsd": 0.75,
+    "actualCostPolicy": "null without provider billing evidence",
+    "stopIfCumulativeEstimateReachesCeiling": true,
+    "estimateBasis": "conservative planning ceiling informed by prior valid smoke estimates; not a provider quote"
+  },
+  "gates": {
+    "sourcePolicy": "public task input/tool/Git-root invariants only",
+    "externalVerifierIsAcceptanceAuthority": true,
+    "taskManifests": [
+      "config/harbor/large-scale-text-editing-full-dev-flow-compatibility.json",
+      "config/harbor/sqlite-db-truncate-full-dev-flow-compatibility.json"
+    ],
+    "notAllowed": ["solution", "hidden verifier", "expected output", "reward feedback", "post-result task-specific gate"]
+  },
+  "stopRules": [
+    "Do not run a model trial until maxCycles 1/3 is observed in a no-model bridge/runtime preflight.",
+    "Classify pre-model auth, Docker, image, package, workdir, or bridge failures as infrastructure-invalid; stop that condition and do not spend a retry automatically.",
+    "Do not add cap 5 or cap 10 in this experiment. A cap-5 proposal requires a new approved spec after cap-1/3 results are aggregated.",
+    "If cap 3 adds no external-verifier pass on either new task and its incremental estimated cost is at least 1.5x cap 1, stop cycle-cap expansion.",
+    "If cap 3 adds a pass on at least one new task and its incremental estimated cost is at most 2x cap 1, prepare (but do not execute) a separate cap-5 decision spec.",
+    "Never infer a general success rate or reliability guarantee from these two tasks."
+  ],
+  "resultsManifestPolicy": {
+    "artifactRoot": "HARBOR_BENCHMARK_ARTIFACT_ROOT",
+    "newManifestRequired": true,
+    "amendmentResultsUseNewJobNames": true,
+    "amendmentArtifactRootPrefix": "fresh-caps-amendment-",
+    "historicalInvalidManifest": "config/harbor/terminal-bench-fresh-cycle-caps-results-manifest.json",
+    "historicalInvalidArtifactsAreImmutable": true,
+    "overwriteExistingStage2OrCanary": false,
+    "includeInvalidTrials": true,
+    "invalidTrialsInSuccessDenominator": false
+  }
+}

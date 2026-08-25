@@ -29,7 +29,9 @@ flowchart TD
 
     Route --> Impl[implementer<br/>模型依 cycle 階梯]
     Impl --> Diff[取得 working diff<br/>依 diff 重新評估 tier，只升不降]
-    Diff --> Tests{deterministic tests}
+    Diff --> Evidence{optional public build evidence}
+    Evidence -- "required blocking failure" --> Rec[記錄 finding] --> Adv
+    Evidence -- pass/observe --> Tests{deterministic tests}
     Tests -- fail --> Rec[記錄 finding] --> Adv
     Tests -- pass --> Rev[reviewer<br/>artifacts 含 decision_log]
 
@@ -74,7 +76,9 @@ flowchart TD
 
 ## Cycle 計數
 
-`maxFixCycles` 計的是「因失敗而重新實作」的次數，預設 3，對應最多 4 次實作（cycle 1 是原始實作，cycle 2 至 4 是三次修正）。可由 `RepoConfig.maxFixCycles` 覆寫。
+`maxCycles` 計的是整個 workflow 最多的 implementation 次數，包含第一次實作；預設 4。core policy 以 `maxImplementationAttempts` 表達。舊 `RepoConfig.maxFixCycles` 只作 deprecated retry-count alias，單獨使用時轉成 `maxCycles=maxFixCycles+1`，與 `maxCycles` 同時設定則 fail closed。
+
+CLI 使用 `--max-cycles N` 直接設定總 implementation 上限；不接受 retry-count 的人工換算。`--max-cycles 1` 就是一次 implementation，`--max-cycles 3` 就是三次。舊 alias 只存在於程式 API/Harbor 相容層，不是新的 CLI 入口。
 
 **關鍵不變量：失敗計數點在失敗當下，不在進入時。** 因此最後一次修正（cycle 4）仍會完整跑完 tests、reviewer 與必要的 final review，只有在它也失敗時才收斂為 `needs_human`。
 
@@ -130,6 +134,24 @@ log 只收結構化 findings，沒有 findings 時才退回整段 summary，避�
 不過就拒絕啟動並收斂為 `needs_human`，成本為零。理由：baseline 是未動過的 HEAD，此時測試就不過代表環境或既有程式碼已經壞了，不是這次任務造成的，implementer 也修不好。實測有一個 run 因為環境沒安裝 `pytest`，連續四個 cycle 收到逐字元相同的錯誤，四次實作全部白費。
 
 代價是每次多跑一次測試。`RepoConfig.skipPreflight` 可關閉，只有在測試本身昂貴且環境確定穩定時才值得。
+
+### 公開 build-output evidence
+
+`RepoConfig.publicChecks` 是 reviewer 的公開執行證據，不是 hidden verifier，也不是
+另一個模型。每個 check 必須宣告 repo-relative `cwd`、argv array、timeout、expected
+exit codes、輸出 byte 上限、`required` 與 `mode`（`observe` 或 `blocking`），診斷只
+允許受限 literal/regex patterns。`src/public-evidence-runner.ts` 不使用 shell，並在
+baseline 與每個 implementation cycle 後產生 bounded、sanitized 的
+`build-evidence-1` artifact；reviewer 收到的是結構化摘要與 evidence reference，不是
+無上限 raw log。
+
+baseline 的正常非零 exit 或 diagnostic match 只是 task-outcome observation，因為
+未修改的 workspace 可能本來就不符合任務要求，仍會繼續呼叫 agent。只有 spawn error
+或 timeout 這類 execution failure 才在任何 agent 呼叫前以 infrastructure failure
+收斂；cycle 中的 required blocking task-outcome failure 會成為 deterministic finding，
+可能觸發下一個 cycle，execution failure 則 fail closed。`observe` failure 只記錄與呈現，不改完成判斷。沒有設定 `publicChecks` 的
+handoff／repo 行為完全不變。它不讀 hidden verifier，不回饋 Harbor reward；外部
+verifier 仍是 benchmark acceptance。
 
 ### resume 的例外
 

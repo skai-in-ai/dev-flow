@@ -1,0 +1,48 @@
+{
+  "schemaVersion": "task-compatibility-1",
+  "taskId": "terminal-bench@2.0/prove-plus-comm",
+  "taskName": "prove-plus-comm",
+  "datasetRef": "terminal-bench@2.0",
+  "datasetRevision": "2.0",
+  "taskRef": "prove-plus-comm",
+  "taskDigest": "20d5b530a07a7ee58f56cbd70e4f123b2371522658f5c5a3dc8aeebf83cf9095",
+  "workspaceKind": "git-repo",
+  "requiresGitRepo": true,
+  "requiresCleanTree": true,
+  "agentWorkdir": "/workspace",
+  "testsVisibleToAgent": true,
+  "verifierMode": "shared",
+  "fullDevFlowCompatible": true,
+  "allowLocalCommit": false,
+  "incompatibilityReasons": [],
+  "deterministicTests": [
+    "test -f plus_comm.v && test -x \"$(command -v coqc)\" && test \"$(git rev-parse --show-toplevel)\" = /workspace"
+  ],
+  "scopeInclude": ["plus_comm.v", "plus_comm.vo"],
+  "scopeExclude": [],
+  "acceptanceCriteria": [
+    "The external Harbor verifier passes after the agent completes the proof and produces plus_comm.vo.",
+    "The task instruction, tests, and verifier remain unchanged from the terminal-bench@2.0 source."
+  ],
+  "riskNotes": [
+    "The derivative changes only environment/Dockerfile to install git and create the clean /workspace baseline.",
+    "allowLocalCommit is false for this comparison because current core review evidence is working-tree based.",
+    "The deterministic preflight command is infrastructure evidence and is not a substitute for the external verifier."
+  ],
+  "artifactRoot": "/logs/artifacts",
+  "agentLogDir": "/logs/agent/full-dev-flow",
+  "maxTier": 1,
+  "model": "gpt-5.6-luna",
+  "reasoningEffort": "medium",
+  "timeoutSeconds": 900,
+  "trialCount": 1,
+  "configStatus": "valid-rerun-after-formal-2-infrastructure-invalid",
+  "sourceProvenance": {
+    "sourceRoot": "/private/tmp/terminal-bench-2.0-full/terminal-bench/prove-plus-comm",
+    "sourceRevision": "terminal-bench@2.0 (local extracted source; upstream commit not present)",
+    "sourceCanonicalSha256": "20cac351f7b92a7002b1159f05bd35a71116bc1610257c3ad778b3d9c2ee4428",
+    "derivativeRoot": "/private/tmp/terminal-bench-formal/prove-plus-comm",
+    "derivativeCanonicalSha256": "20d5b530a07a7ee58f56cbd70e4f123b2371522658f5c5a3dc8aeebf83cf9095",
+    "canonicalDigestRule": "sorted relative path + TAB + file SHA-256 + LF over all files"
+  }
+}

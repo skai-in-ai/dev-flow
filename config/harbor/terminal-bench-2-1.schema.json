@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agent-orchestrator/harbor-runtime-1",
+  "title": "Harbor Terminal-Bench 2.1 runtime configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "harborVersion", "dataset", "harness", "agent", "model", "reasoningEffort", "timeoutSeconds", "trialCount", "verifierMode", "allowInternet", "sessionMode"],
+  "properties": {
+    "schemaVersion": { "const": "harbor-runtime-1" },
+    "harborVersion": { "const": "0.20.0" },
+    "dataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "revision", "tasks"],
+      "properties": {
+        "ref": { "const": "terminal-bench/terminal-bench-2-1" },
+        "revision": { "type": "string", "minLength": 1, "pattern": "^\\S(?:.*\\S)?$", "not": { "pattern": "^[lL][aA][tT][eE][sS][tT]$" } },
+        "tasks": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "sha256"],
+            "properties": { "id": { "type": "string", "minLength": 1 }, "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" } }
+          }
+        }
+      }
+    },
+    "harness": { "enum": ["harbor-codex", "single-pi", "full-dev-flow"] },
+    "agent": { "enum": ["codex", "pi", "custom-full-dev-flow"] },
+    "model": { "type": ["string", "null"] },
+    "reasoningEffort": { "enum": ["low", "medium", "high", "xhigh", null] },
+    "timeoutSeconds": { "type": "integer", "minimum": 1 },
+    "trialCount": { "type": "integer", "minimum": 1 },
+    "verifierMode": { "enum": ["shared", "separate", "unknown"] },
+    "allowInternet": { "type": ["boolean", "null"] },
+    "maxCycles": { "type": ["integer", "null"], "minimum": 1 },
+    "maxFixCycles": { "type": ["integer", "null"], "minimum": 0 },
+    "sessionMode": { "enum": ["fresh", "reused", "unknown"] },
+    "notes": { "type": "array", "items": { "type": "string" } }
+  },
+  "allOf": [
+    { "not": { "required": ["maxCycles", "maxFixCycles"] } },
+    { "if": { "properties": { "harness": { "const": "harbor-codex" } } }, "then": { "properties": { "agent": { "const": "codex" }, "maxCycles": { "const": null }, "maxFixCycles": { "const": null } } } },
+    { "if": { "properties": { "harness": { "const": "single-pi" } } }, "then": { "properties": { "agent": { "const": "pi" }, "maxCycles": { "const": null }, "maxFixCycles": { "const": null } } } },
+    { "if": { "properties": { "harness": { "const": "full-dev-flow" } } }, "then": { "properties": { "agent": { "const": "custom-full-dev-flow" } } } }
+  ]
+}

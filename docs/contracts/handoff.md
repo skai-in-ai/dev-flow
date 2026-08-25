@@ -56,3 +56,10 @@ orchestrator 不驗證 `resume` 是否正當 —— 授權、時效與 provenanc
 ## 驗證行為
 
 `src/handoff.ts` 會拒絕非 object、空的 `repo`/`objective`、錯誤的 string arrays，以及非 `direct_main` 的 delivery。它目前不檢查 repo 是否存在、scope path 是否真的受限，也不禁止任意 shell test command；handoff 應視為受信任的本機操作指令。
+
+Repo-level optional `publicChecks` (shape mirrored by
+`config/public-build-evidence.schema.json`) is a separate, stricter contract for reviewer
+evidence. Checks use a repository-relative `cwd`, an argv array (never a shell
+string), bounded timeout/output, expected exit codes, and `observe`/`blocking`
+mode. They are validated fail-closed and are absent by default, so existing
+handoffs keep their behavior.

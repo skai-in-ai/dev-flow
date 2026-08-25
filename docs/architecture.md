@@ -12,7 +12,7 @@
 | Routing | `src/routing.ts`、`src/models.ts`、`src/classifier-prompt.ts` | deterministic floor、model classifier 合併、模型選擇 |
 | Workflow | `src/orchestrator.ts` | cycle、升級、測試、review 與完成條件 |
 | Adapter | `src/adapters/pi/pi-process-adapter.ts` | Pi child process、工具權限、JSONL 與 verdict 解析 |
-| Execution | `src/test-runner.ts` | 依序執行 deterministic shell commands |
+| Execution | `src/test-runner.ts`、`src/public-evidence-runner.ts` | 依序執行 deterministic shell commands，或以 argv 執行受控公開 checks 並產生 build evidence |
 | Policy | `src/policies/completion-policy.ts` | 失敗後是否重試的唯一判斷來源 |
 | Memory | `src/decision-log.ts` | 跨 cycle 的 findings 與 implementer 回應 |
 | Budget | `src/prompt-budget.ts` | artifact 截斷；不得原地改寫 `request.artifacts` |
@@ -54,8 +54,8 @@ sequenceDiagram
     I-->>E: working-tree changes + implementation response
     E->>R: actual diff
     R-->>E: same or higher tier
-    E->>T: commands
-    T-->>E: pass/fail + output
+    E->>T: commands / public checks
+    T-->>E: pass/fail + bounded output / build-evidence-1
     E->>V: handoff (including invariants/non-goals) + diff + tests + repo rules + decision log
     Note over E,V: reviewer batches reasonable reachable approved sibling findings and respects explicit non-goals
     V-->>E: pass/fail/escalate/needs_spec
@@ -103,6 +103,8 @@ ChatGPT/repo → approved Issue → human dev-flow-ready → one Mac poll
     ├── spec.md                    # 執行當下的 spec 快照（spec 會被就地改寫）
     ├── decisions.json             # 跨 cycle 累積的 findings 與 implementer 回應
     ├── preflight-tests.json       # baseline 預檢結果
+    ├── build-evidence-baseline.json # optional public checks before agents
+    ├── build-evidence-cycle-<n>.json # optional public checks after implementation
     ├── report.md                  # 人類可讀報告（決定性渲染）
     ├── cycle-<n>.diff             # 該 cycle 的完整 diff，第一級檔案
     ├── cycle-<n>-router/          # classifier session，歸屬於本次 run

@@ -8,7 +8,25 @@
 npm test
 ```
 
-此命令先執行兩套 TypeScript build，再用 Node.js test runner 跑 `dist/test/*.test.js`。測試目前涵蓋 routing floor、tier/model mapping（含 cycle 階梯與 tier 上限）、cycle 計數與最後一次修正的完整驗證、decision log 回流、`needs_spec` 出口與 spec 回寫、baseline 預檢、相同失敗熔斷、崩潰寫出 `failed` summary、prompt 預算截斷、dev-flow gating、報告渲染、test runner、spec round-trip/lifecycle、測試命令驗證、Pi JSONL parsing、router zero-tools、JSON verdict aliases、無測試提示、linked worktree ledger，以及 queue 的 attempt claim ref、resume 決策解析、needs-human 報告渲染、retained worktree provenance 驗證、createdAt FIFO 選取、等待中的 resume 不被選取也不被寫入，已發布 PR 的 Issue 不可 resume、claim 後 resume 交付前提（過長決策、包含未 commit 變更的唯讀衝突比對與缺少 claimed SHA 的 fetch）、交付成功後的 worktree 回收與 ledger 搬移，以及事件壓縮的保留判準。Pi adapter 的 stream、spawn、timeout、close 與 bounded stderr/parser failure 也必須以正常 `Error` 收斂，不得由 stream callback 產生未捕捉例外。
+### Harbor preflight 與 fake foundation
+
+`bin/harbor-preflight` 是 read-only readiness check，只能檢查 Harbor／Docker／Pi／Codex binary、Docker daemon、固定 Harbor version 與 auth presence。它不得輸出 secret 或 auth file 內容，不得登入 Harbor Hub、pull image、啟動 container、執行 trial 或呼叫模型。測試以 temporary fake PATH binaries 與 fake Harbor-like artifacts 驗證，不依賴本機 Harbor、Docker、provider auth 或網路。
+
+CLI 不接受任何參數；`--run`、`--trial`、`--upload` 或未知參數都必須在 checks 前 fail closed。`CODEX_HOME` 只檢查 `$CODEX_HOME/auth.json`；未設定時才 fallback 到 `$HOME/.codex/auth.json`。Pi auth directory 必須先通過 filesystem directory type check，不能把普通檔案當成 directory。
+
+### Harbor Full dev-flow wrapper
+
+`harbor_full_dev_flow.agent:FullDevFlowAgent` 是 evaluation-only thin wrapper。wheel
+內嵌已 build 的 JS bundle 並做 SHA-256 驗證；container setup 只允許固定 nvm
+`v0.40.2`、Node major `22` 與 `@earendil-works/pi-coding-agent@0.82.1`，可在
+setup 階段下載，但不得使用 floating latest。apt/network/permissions 或 task
+compatibility 不符合時，
+必須在 model call 前 fail closed。既有 `.orchestrator/runs/` ledger 不得由 bridge
+重定向，reward 不得回饋 agent，原始 prompt/auth/raw events 不得整包複製到 artifacts。
+
+Fake artifact 必須帶 `source: "fake-fixture"`，不得渲染成官方 benchmark result。Telemetry normalizer 對缺失 token、cache、reward、cost 或 verifier evidence 使用 `null`；derived token 必須保存公式，不能以 0 代替。shared verifier 也不能被文件或 metadata 宣稱為 hidden tests。
+
+此命令先執行兩套 TypeScript build，再用 Node.js test runner 跑 `dist/test/*.test.js`。測試目前涵蓋 routing floor、tier/model mapping（含 cycle 階梯與 tier 上限）、cycle 計數與最後一次修正的完整驗證、decision log 回流、`needs_spec` 出口與 spec 回寫、baseline 預檢、相同失敗熔斷、崩潰寫出 `failed` summary、prompt 預算截斷、dev-flow gating、報告渲染、test runner、公開 build-output evidence 的 argv/timeout/output cap/redaction/observe-blocking 與 cycle provenance、spec round-trip/lifecycle、測試命令驗證、Pi JSONL parsing、router zero-tools、JSON verdict aliases、無測試提示、linked worktree ledger，以及 queue 的 attempt claim ref、resume 決策解析、needs-human 報告渲染、retained worktree provenance 驗證、createdAt FIFO 選取、等待中的 resume 不被選取也不被寫入，已發布 PR 的 Issue 不可 resume、claim 後 resume 交付前提（過長決策、包含未 commit 變更的唯讀衝突比對與缺少 claimed SHA 的 fetch）、交付成功後的 worktree 回收與 ledger 搬移，以及事件壓縮的保留判準。Pi adapter 的 stream、spawn、timeout、close 與 bounded stderr/parser failure 也必須以正常 `Error` 收斂，不得由 stream callback 產生未捕捉例外。
 
 ## GitHub queue local checks
 
@@ -50,6 +68,7 @@ READY_FOR_MAIN · Tier <n> · <cycle>/<maxCycles> cycles
 - GitHub 上給人閱讀的內容（Issue comment、needs-human 報告、PR title/body、recovery 指示）使用台灣繁體中文；label、command、verdict token、程式碼識別字與 **`Closes #<n>` 這類 GitHub 關鍵字**屬 machine-readable，一律保留英文。`Closes` 曾被誤翻成中文敘述，後果是 PR 被 merge 之後對應的 Issue 不會自動關閉。
 - Spec tool 會拒絕明顯的自然語言測試敘述，但不等同 shell sandbox；approved spec 仍是受信任輸入。
 - Implementer 有 bash 與寫檔能力；Pi 層的 tool allowlist 限制工具種類，但不是容器或 OS sandbox。
+- `publicChecks` 是受信任的本機 operator configuration，但 runner 仍以直接 argv spawn、repo-relative cwd、timeout、stdout/stderr caps 與受限 diagnostics 限制執行；不使用 shell、不輸出完整環境、不讀 hidden verifier。Evidence artifact 只保存 sanitized bounded excerpts、diagnostic counts、cycle/phase、`failureKind`（task-outcome/execution）與 relative evidence refs。Baseline 的正常非零 exit/diagnostic 是 task-outcome observation；只有 spawn/timeout execution failure fail closed。Observe checks 不影響完成判斷；cycle blocking checks 只依 manifest 宣告的 task-outcome 結果進下一輪。
 - `scope.include/exclude` 目前是 routing/review contract，沒有 deterministic path enforcement。
 - Reviewer 讀取的 repo rules 目前只有目標 repo 根目錄 `CLAUDE.md`。
 
