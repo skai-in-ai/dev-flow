@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "terminal-bench-corpus-phase1-triage-1",
+  "type": "object",
+  "required": ["schemaVersion", "ruleVersion", "inventorySchemaVersion", "inventoryDigest", "sourceIntegrity", "harnesses", "summary", "batch0Candidates", "tasks"],
+  "properties": {
+    "schemaVersion": {"const": "terminal-bench-corpus-phase1-triage-1"},
+    "ruleVersion": {"const": "phase1-conservative-harness-compatibility-1"},
+    "inventorySchemaVersion": {"const": "terminal-bench-corpus-inventory-1"},
+    "inventoryDigest": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "sourceIntegrity": {
+      "type": "object",
+      "required": ["status", "reason"],
+      "properties": {"status": {"const": "not-computed"}, "reason": {"type": "string", "minLength": 1}},
+      "additionalProperties": false
+    },
+    "harnesses": {"type": "array", "const": ["codex", "single-pi", "full-dev-flow"]},
+    "excludedPreviouslyRunTasks": {"type": "array", "items": {"type": "string"}},
+    "summary": {"$ref": "#/$defs/summary"},
+    "batch0Candidates": {"type": "array", "items": {"type": "string"}, "minItems": 5, "maxItems": 8},
+    "tasks": {"type": "array", "items": {"$ref": "#/$defs/entry"}, "minItems": 1}
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "classificationCounts": {
+      "type": "object",
+      "required": ["direct-compatible", "derivative-required", "blocked-readonly", "unknown"],
+      "properties": {"direct-compatible": {"type": "integer", "minimum": 0}, "derivative-required": {"type": "integer", "minimum": 0}, "blocked-readonly": {"type": "integer", "minimum": 0}, "unknown": {"type": "integer", "minimum": 0}},
+      "additionalProperties": false
+    },
+    "summary": {
+      "type": "object",
+      "required": ["taskCount", "entries", "byClassification", "byHarness", "riskStrata"],
+      "properties": {"taskCount": {"type": "integer", "minimum": 1}, "entries": {"type": "integer", "minimum": 1}, "byClassification": {"$ref": "#/$defs/classificationCounts"}, "byHarness": {"type": "object", "required": ["codex", "single-pi", "full-dev-flow"], "properties": {"codex": {"$ref": "#/$defs/classificationCounts"}, "single-pi": {"$ref": "#/$defs/classificationCounts"}, "full-dev-flow": {"$ref": "#/$defs/classificationCounts"}}, "additionalProperties": false}, "riskStrata": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 1}}},
+      "additionalProperties": false
+    },
+    "entry": {
+      "type": "object",
+      "required": ["taskName", "relativePath", "inventoryDigest", "harness", "classification", "reasons", "risks", "provenance", "metadata", "workdirKnown", "dockerfileObserved", "publicCheckTypes", "adaptationPlan"],
+      "properties": {
+        "taskName": {"type": "string", "minLength": 1}, "relativePath": {"type": "string", "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"}, "inventoryDigest": {"type": "string", "pattern": "^[a-f0-9]{64}$"}, "harness": {"enum": ["codex", "single-pi", "full-dev-flow"]}, "classification": {"enum": ["direct-compatible", "derivative-required", "blocked-readonly", "unknown"]}, "reasons": {"type": "array", "items": {"type": "string"}}, "risks": {"type": "array", "items": {"type": "string"}}, "provenance": {"type": "array", "items": {"type": "string"}, "minItems": 1}, "metadata": {"type": "object", "required": ["category", "difficulty"], "properties": {"category": {"type": ["string", "null"]}, "difficulty": {"type": ["string", "null"]}}, "additionalProperties": false}, "workdirKnown": {"type": "boolean"}, "dockerfileObserved": {"type": "boolean"}, "publicCheckTypes": {"type": "array", "items": {"type": "string"}}, "adaptationPlan": {"enum": ["none", "workspace-compatible-derivative", "not-authorized"]}
+      },
+      "additionalProperties": false
+    }
+  }
+}

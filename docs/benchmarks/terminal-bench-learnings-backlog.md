@@ -21,6 +21,8 @@ Owner：agent-orchestrator 維護者（root agent 審核；operator 提供 auth�
 - 五題鎖定設定與命令：[stage 2 run plan](../../config/harbor/terminal-bench-stage2-five-task-run-plan.md)
 - 新版 telemetry 實跑：[telemetry canary](terminal-bench-telemetry-canary.md)
 - 離線聚合器：[harbor-aggregate](harbor-aggregate.md)
+- Full-corpus roadmap：[terminal-bench-full-corpus-roadmap](terminal-bench-full-corpus-roadmap.md)
+- Full-corpus Phase 1 triage：[terminal-bench-full-corpus-phase1-triage](terminal-bench-full-corpus-phase1-triage.md)
 - commit-capable 評估：[commit-capable follow-up](harbor-commit-capable-mode-follow-up.md)
 - Pi subscription wrapper：[Pi wrapper follow-up](harbor-pi-subscription-wrapper-follow-up.md)
 
@@ -31,7 +33,7 @@ Owner：agent-orchestrator 維護者（root agent 審核；operator 提供 auth�
 | GOAL-01 | 增加 evaluation-only 的第三入口，讓 Harbor 能跑 Full dev-flow benchmark。既有 production 入口 A（GitHub Issue queue）與 B（working-tree / CLI）不改行為、不改交付邊界。 | `verified-boundary` | root | `docs/overview.md` 的入口 C；AC：production A/B regression tests 維持通過，第三入口不自動改 production routing、commit、push、merge 或 deploy。 |
 | GOAL-02 | 在同一 locked task derivative 上比較三個 harness：Harbor Codex CLI、Single Pi（Codex subscription）、Full dev-flow wrapper。 | `verified-for-smoke` | benchmark owner | stage2 結果的 5 × 3 矩陣；AC：每筆 trial 記 task digest、harness、model、requested/effective config、artifact path 與 include/exclude。 |
 | GOAL-03 | 觀察外部 verifier 成功、wall time、model calls、cycles、token/cache、估算成本與失敗類型，評估是否值得把 Full dev-flow 納入 benchmark 流程。 | `verified-schema-and-smoke` | telemetry owner | manifest + aggregator schema 與 15 筆有效 trial；AC：原始值、derived 值、缺值 `null`、invalid taxonomy 可重算。 |
-| GOAL-04 | 之後以重複 trial 研究可靠性與 cycle cap；「三輪」是待驗證的政策假設，不是預先保證。 | `in_progress` | benchmark owner | `.agent/specs/2026-08-22-terminal-bench-fresh-cycle-caps.md`、`config/harbor/terminal-bench-fresh-cycle-caps-preregistration.json`；兩題 × Codex/Single Pi baseline × Full cap 1/3 的 amendment primary matrix 已完成 8/8；仍只能做本批受限結論，不能宣稱普遍 cap 最佳或三輪必要。另有 1 筆 Codex diagnostic 明確 excluded。 |
+| GOAL-04 | 之後以重複 trial 研究可靠性與 cycle cap；「三輪」是待驗證的政策假設，不是預先保證。 | `in_progress` | benchmark owner | `.agent/specs/2026-08-22-terminal-bench-fresh-cycle-caps.md`、`config/harbor/terminal-bench-fresh-cycle-caps-preregistration.json`；兩題 × Codex/Single Pi baseline × Full cap 1/3 的 amendment primary matrix 已完成 8/8；仍只能做本批受限結論，不能宣稱普遍 cap 最佳或三輪必要。另有 1 筆 Codex diagnostic 明確 excluded。Full-corpus Phase 0 inventory 與 Phase 1 compatibility triage 已完成（89 tasks／267 entries）；Phase 2 wheel、no-model preflight 與 evidence canary 尚未開始。 |
 | GOAL-05 | 允許 local commit 只作為 disposable benchmark workspace 的可選能力；production dev-flow 仍保留既有安全 invariant。 | `deferred` | core owner | `harbor-commit-capable-mode-follow-up.md`；AC：baseline SHA、`baseline..HEAD` 加 staged/unstaged diff、commit-only/mixed regression tests 全部具備前，不得開 `allowLocalCommit=true`。 |
 
 「第三入口」是測試適配層，不是第四種 production workflow。benchmark 的成功也不
