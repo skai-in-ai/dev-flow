@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Harbor custom Full dev-flow bridge. Build locally, then delegate to the
+# single TypeScript bridge; it accepts only --handoff <absolute path>.
+set -euo pipefail
+ORCHESTRATOR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+npm --prefix "$ORCHESTRATOR" run --silent build
+exec node "$ORCHESTRATOR/dist/harbor-bridge.js" "$@"

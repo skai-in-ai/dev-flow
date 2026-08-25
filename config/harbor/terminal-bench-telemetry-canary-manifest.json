@@ -1,0 +1,30 @@
+{
+  "schemaVersion": "benchmark-run-manifest-1",
+  "artifactRoot": { "env": "HARBOR_BENCHMARK_ARTIFACT_ROOT" },
+  "artifacts": [
+    {
+      "path": "harbor-telemetry-canary/telemetry-canary-prove-plus-comm-codex/prove-plus-comm__mFLS6z6",
+      "includeInComparison": true,
+      "failureCategory": null,
+      "invalidReason": null,
+      "estimatedCostUsd": 0.01479548,
+      "actualCostUsd": null
+    },
+    {
+      "path": "harbor-telemetry-canary/telemetry-canary-prove-plus-comm-single-pi-v2/prove-plus-comm__YcZDoB8",
+      "includeInComparison": true,
+      "failureCategory": null,
+      "invalidReason": null,
+      "estimatedCostUsd": 0.0130044,
+      "actualCostUsd": null
+    },
+    {
+      "path": "harbor-telemetry-canary/telemetry-canary-prove-plus-comm-full-dev-flow-v2-retry-1/prove-plus-comm__zm5Web6",
+      "includeInComparison": true,
+      "failureCategory": null,
+      "invalidReason": null,
+      "estimatedCostUsd": 0.0106008,
+      "actualCostUsd": null
+    }
+  ]
+}

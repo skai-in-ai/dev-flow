@@ -9,16 +9,17 @@ export type { ReviewVerdict };
 import type { Handoff, RepoConfig } from "./handoff.js";
 import { hybridRoute, type ModelClassifier, type RoutingResult } from "./routing.js";
 import { modelFor } from "./models.js";
-import { DEFAULT_MAX_FIX_CYCLES, maxCyclesFor, nextCycle } from "./policies/completion-policy.js";
+import { DEFAULT_MAX_IMPLEMENTATION_ATTEMPTS, maxImplementationAttemptsForLegacyRetries, nextCycle } from "./policies/completion-policy.js";
 import { EMPTY_DECISION_LOG, appendFindings, appendResponse, formatDecisionLog, repeatsPreviousCycle, type DecisionLog, type FindingSource } from "./decision-log.js";
 import { runTests, type CommandRunner, type TestResult } from "./test-runner.js";
+import { PublicBuildEvidenceRunner, publicEvidenceSummary, validatePublicChecks, type PublicEvidenceArtifact, type PublicEvidenceExecutor } from "./public-evidence-runner.js";
 import { renderReport } from "./report.js";
 
 const execFileAsync = promisify(execFile);
-export interface OrchestratorDependencies { agents: AgentRunner; tests: CommandRunner; classifier?: ModelClassifier; config?: RepoConfig; now?: () => Date; }
+export interface OrchestratorDependencies { agents: AgentRunner; tests: CommandRunner; classifier?: ModelClassifier; config?: RepoConfig; publicEvidence?: PublicEvidenceExecutor; now?: () => Date; }
 /** reviewer 判定「handoff 未定義的產品語意」時交回的內容，供討論階段直接使用。 */
 export interface SpecGap { semantic: string; candidates: string[]; }
-export interface RunVerification { tests: Array<Pick<TestResult, "command" | "passed">>; reviewerVerdict: ReviewVerdict | "not_run"; finalReviewerVerdict: ReviewVerdict | "not_run"; }
+export interface RunVerification { tests: Array<Pick<TestResult, "command" | "passed">>; reviewerVerdict: ReviewVerdict | "not_run"; finalReviewerVerdict: ReviewVerdict | "not_run"; publicEvidence?: { phase: "baseline" | "cycle"; cycle: number | null; summary: PublicEvidenceArtifact["summary"] }; }
 export interface RunOutcome { status: "ready_for_main" | "needs_human" | "failed"; runId: string; tier: Tier; cycles: number; maxCycles: number; routing: RoutingResult; specGap?: SpecGap; cost: RunCost; durationMs: number; verification: RunVerification; error?: string; }
 /** 依角色分攤的花費；`total` 含 router。單位為美金。 */
 export interface RunCost { total: number; byRole: Record<string, number> }
@@ -48,6 +49,8 @@ export class Orchestrator {
   constructor(private readonly deps: OrchestratorDependencies) {}
   async run(handoff: Handoff, onProgress: (line: string) => void = console.log, source: RunSource = {}): Promise<RunOutcome> {
     const repo = resolve(handoff.repo); const runId = `${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID().slice(0, 8)}`;
+    const publicChecks = validatePublicChecks(this.deps.config?.publicChecks);
+    const publicEvidence = this.deps.publicEvidence ?? new PublicBuildEvidenceRunner();
     await excludeLedger(repo);
     const status = await git(repo, ["status", "--porcelain", "--untracked-files=all"]);
     if (meaningfulStatus(status).length && source.allowRetainedChanges !== true) throw new Error("Target repo working tree must be clean before orchestration");
@@ -63,8 +66,18 @@ export class Orchestrator {
     };
     // spec 會被就地改寫，執行當下的原文必須快照。
     if (source.specMarkdown) await writeFile(join(root, "spec.md"), source.specMarkdown);
-    const maxFixCyclesEarly = this.deps.config?.maxFixCycles ?? DEFAULT_MAX_FIX_CYCLES;
+    const maxImplementationAttemptsEarly = resolveMaxImplementationAttempts(this.deps.config);
     const preflightCommands = preflightTestCommands(handoff, this.deps.config);
+    if (publicChecks.length) {
+      const baselineEvidence = await publicEvidence.run(repo, publicChecks, "baseline", null);
+      await ledger(root, "build-evidence-baseline.json", baselineEvidence);
+      verification = { ...verification, publicEvidence: { phase: baselineEvidence.phase, cycle: baselineEvidence.cycle, summary: baselineEvidence.summary } };
+      if (baselineEvidence.summary.infrastructureFailures > 0) {
+        const reason = `public build evidence could not execute on the untouched baseline; refusing to start an agent:\n${publicEvidenceFindings(baselineEvidence)}`;
+        onProgress("Preflight: required public checks fail on the untouched baseline; refusing to start.");
+        return this.finish(root, "needs_human", runId, initialTierGuess(source), 0, maxImplementationAttemptsEarly, await hybridRoute(handoff, this.deps.config, undefined), { total: 0, byRole: {} }, startedAt, source, undefined, reason, EMPTY_DECISION_LOG, verification);
+      }
+    }
     if (preflightCommands.length && this.deps.config?.skipPreflight !== true) {
       const preflight = await runTests(this.deps.tests, preflightCommands, repo);
       verification = { ...verification, tests: preflight.map(({ command, passed }) => ({ command, passed })) };
@@ -77,13 +90,13 @@ export class Orchestrator {
         // 缺少命令或其他環境錯誤仍必須在任何 agent 前停止。
         const reason = `preflight failed on a clean tree; the environment or the existing code is broken before this task starts:\n${broken.map((test) => `${test.command}: ${test.output}`).join("\n")}`;
         onProgress("Preflight: deterministic tests fail on the untouched baseline; refusing to start.");
-        return this.finish(root, "needs_human", runId, initialTierGuess(source), 0, maxCyclesFor(maxFixCyclesEarly), await hybridRoute(handoff, this.deps.config, undefined), { total: 0, byRole: {} }, startedAt, source, undefined, reason, EMPTY_DECISION_LOG, verification);
+        return this.finish(root, "needs_human", runId, initialTierGuess(source), 0, maxImplementationAttemptsEarly, await hybridRoute(handoff, this.deps.config, undefined), { total: 0, byRole: {} }, startedAt, source, undefined, reason, EMPTY_DECISION_LOG, verification);
       }
     }
     const initial = applyTierCap(await hybridRoute(handoff, this.deps.config, this.deps.classifier, "", join(root, "router-initial")), source.maxTier);
     charge("router", initial.costUsd);
     await ledger(root, "run.json", { runId, handoff, baseline, initialRouting: initial, startedAt: startedAt.toISOString(), source: { specPath: source.specPath, specTitle: source.specTitle, maxTier: source.maxTier } });
-    const maxFixCycles = this.deps.config?.maxFixCycles ?? DEFAULT_MAX_FIX_CYCLES;
+    const maxImplementationAttempts = resolveMaxImplementationAttempts(this.deps.config);
     let effective = initial, cycle = 1, implementationNeeded = true, lastFindings: string[] = [];
     let decisionLog: DecisionLog = EMPTY_DECISION_LOG;
     /** 累積失敗紀錄並落盤。歷史一律保留，不覆寫，也不標記任何 finding 為已推翻。 */
@@ -102,15 +115,15 @@ export class Orchestrator {
         onProgress(`Stalled: ${stallReason}`);
         return false;
       }
-      const decision = nextCycle({ cycle, maxFixCycles });
+      const decision = nextCycle({ cycle, maxImplementationAttempts });
       if (decision.action === "give_up") return false;
       cycle = decision.state.cycle;
       implementationNeeded = true;
       return true;
     };
     try {
-    while (cycle <= maxCyclesFor(maxFixCycles)) {
-      onProgress(`Cycle ${cycle}/${maxCyclesFor(maxFixCycles)} · Tier ${effective.tier}`);
+    while (cycle <= maxImplementationAttempts) {
+      onProgress(`Cycle ${cycle}/${maxImplementationAttempts} · Tier ${effective.tier}`);
       if (implementationNeeded) {
         const implementerModel = modelFor(effective.tier, "implementer", cycle, source.maxTier);
         const result = await this.deps.agents.run({ role: "implementer", taskId: runId, cwd: repo, sessionDir: join(root, `cycle-${cycle}-implementer`), model: implementerModel, timeoutMs: 25 * 60_000, prompt: `Implement this handoff:\n${JSON.stringify(handoff, null, 2)}${source.resume ? `\nResume attempt ${source.resume.attempt}; authorized decision: ${source.resume.decision}\nPrior attempted fixes:\n${source.resume.attemptedFixes.join("\n")}` : ""}${lastFindings.length ? `\nFix these findings:\n${lastFindings.join("\n")}` : ""}`, artifacts: { handoff: JSON.stringify(handoff, null, 2), baseline, findings: [...(source.resume?.findings ?? []), ...lastFindings].join("\n"), attempted_fixes: (source.resume?.attemptedFixes ?? []).join("\n"), test_evidence: JSON.stringify(source.resume?.testEvidence ?? []), decision_log: [source.resume?.decisionLog, formatDecisionLog(decisionLog)].filter(Boolean).join("\n\n") } });
@@ -126,24 +139,40 @@ export class Orchestrator {
       const escalated = assessed.tier > effective.tier;
       effective = { ...assessed, tier: Math.max(effective.tier, assessed.tier) as Tier };
       if (escalated) onProgress(`Risk escalation: Tier ${effective.tier}; retaining implementation and strengthening checks.`);
+      let cycleEvidence: PublicEvidenceArtifact | undefined;
+      if (publicChecks.length) {
+        cycleEvidence = await publicEvidence.run(repo, publicChecks, "cycle", cycle);
+        await ledger(root, `build-evidence-cycle-${cycle}.json`, cycleEvidence);
+        verification = { ...verification, publicEvidence: { phase: cycleEvidence.phase, cycle: cycleEvidence.cycle, summary: cycleEvidence.summary } };
+        const blockingFindings = publicEvidenceFindings(cycleEvidence);
+        if (cycleEvidence.summary.infrastructureFailures > 0) {
+          return this.finish(root, "needs_human", runId, effective.tier, cycle, maxImplementationAttempts, effective, cost, startedAt, source, undefined, `public build evidence could not execute during cycle ${cycle}:\n${blockingFindings}`, decisionLog, verification);
+        }
+        if (cycleEvidence.summary.blockingOutcomeFailures > 0) {
+          lastFindings = blockingFindings.split("\n").filter(Boolean);
+          await record("tests", "public-evidence", lastFindings);
+          if (!advance()) return this.finish(root, "needs_human", runId, effective.tier, cycle, maxImplementationAttempts, effective, cost, startedAt, source, undefined, stallReason, decisionLog, verification);
+          continue;
+        }
+      }
       const baseTests = handoff.tests.length ? handoff.tests : (this.deps.config?.tests ?? []);
       const testCommands = [...new Set([...baseTests, ...(this.deps.config?.testsByTier?.[effective.tier] ?? [])])];
       if (testCommands.length === 0) onProgress("Tests: no deterministic commands configured; reviewers will receive this explicitly.");
       const testResults = await runTests(this.deps.tests, testCommands, repo); verification = { ...verification, tests: testResults.map(({ command, passed }) => ({ command, passed })) }; await ledger(root, `cycle-${cycle}-tests.json`, testResults);
-      if (testResults.some((test) => !test.passed)) { lastFindings = testResults.filter((test) => !test.passed).map((test) => `${test.command}: ${test.output}`); await record("tests", "deterministic", lastFindings); if (!advance()) return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source, undefined, stallReason, decisionLog, verification); continue; }
-      const artifacts = { handoff: JSON.stringify(handoff, null, 2), diff, tests: formatTests(testResults), repo_rules: await repoRules(repo), decision_log: [source.resume?.decisionLog, formatDecisionLog(decisionLog)].filter(Boolean).join("\n\n"), resume_decision: source.resume?.decision ?? "", prior_findings: (source.resume?.findings ?? []).join("\n"), attempted_fixes: (source.resume?.attemptedFixes ?? []).join("\n"), prior_test_evidence: JSON.stringify(source.resume?.testEvidence ?? []) };
+      if (testResults.some((test) => !test.passed)) { lastFindings = testResults.filter((test) => !test.passed).map((test) => `${test.command}: ${test.output}`); await record("tests", "deterministic", lastFindings); if (!advance()) return this.finish(root, "needs_human", runId, effective.tier, cycle, maxImplementationAttempts, effective, cost, startedAt, source, undefined, stallReason, decisionLog, verification); continue; }
+      const artifacts = { handoff: JSON.stringify(handoff, null, 2), diff, tests: formatTests(testResults), public_evidence: publicEvidenceSummary(cycleEvidence), repo_rules: await repoRules(repo), decision_log: [source.resume?.decisionLog, formatDecisionLog(decisionLog)].filter(Boolean).join("\n\n"), resume_decision: source.resume?.decision ?? "", prior_findings: (source.resume?.findings ?? []).join("\n"), attempted_fixes: (source.resume?.attemptedFixes ?? []).join("\n"), prior_test_evidence: JSON.stringify(source.resume?.testEvidence ?? []) };
       const reviewerModel = modelFor(effective.tier, "reviewer");
       const review = await this.deps.agents.run({ role: "reviewer", taskId: runId, cwd: repo, sessionDir: join(root, `cycle-${cycle}-reviewer`), model: reviewerModel, prompt: "Review the supplied final diff against the handoff. You are read-only.", artifacts });
       await ledger(root, `cycle-${cycle}-reviewer.json`, review); charge("reviewer", costOf(review.usage));
       const verdict = review.verdict ?? "fail"; verification = { ...verification, reviewerVerdict: verdict };
       const reviewGap = specGap(verdict, review.findings);
-      if (reviewGap) { await record("reviewer", reviewerModel.model, [reviewGap.semantic, ...reviewGap.candidates]); onProgress(`Reviewer reports an undefined product semantic; returning to discussion without consuming a cycle.`); return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source, reviewGap, undefined, decisionLog, verification); }
+      if (reviewGap) { await record("reviewer", reviewerModel.model, [reviewGap.semantic, ...reviewGap.candidates]); onProgress(`Reviewer reports an undefined product semantic; returning to discussion without consuming a cycle.`); return this.finish(root, "needs_human", runId, effective.tier, cycle, maxImplementationAttempts, effective, cost, startedAt, source, reviewGap, undefined, decisionLog, verification); }
       if (verdict === "escalate" && effective.tier < 2 && (source.maxTier === undefined || effective.tier < source.maxTier)) { effective = applyTierCap({ ...effective, tier: (effective.tier + 1) as Tier, reasons: [...effective.reasons, "reviewer escalation"] }, source.maxTier); implementationNeeded = false; onProgress(`Reviewer escalated to Tier ${effective.tier}; re-reviewing without reimplementation.`); continue; }
       if (verdict === "escalate" && source.maxTier !== undefined && effective.tier >= source.maxTier && source.maxTier < 2) {
         const finding = `reviewer requested escalation beyond operator max-tier cap ${source.maxTier}`;
         await record("reviewer", reviewerModel.model, [finding]);
         onProgress(`Reviewer escalation blocked by --max-tier ${source.maxTier}; returning for human review.`);
-        return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source, undefined, undefined, decisionLog, verification);
+        return this.finish(root, "needs_human", runId, effective.tier, cycle, maxImplementationAttempts, effective, cost, startedAt, source, undefined, undefined, decisionLog, verification);
       }
       // 已達最高 tier 仍 escalate：reviewer 說的是「這超出我的判斷」而非「實作有錯」，
       // 正確動作是交給 Sol 裁決，不是叫 implementer 再改一次。不消耗 cycle，不重新實作。
@@ -151,16 +180,16 @@ export class Orchestrator {
       if (deferredToFinal) onProgress("Reviewer escalated at the highest tier; deferring the decision to the final reviewer without consuming a cycle.");
       // pass 與上述 escalate 以外一律走失敗路徑，包含降級的 needs_spec（候選答案不足）。
       // 白名單而非黑名單：新增 verdict 時預設是「不放行」，不會靜默地把不合格的 review 當成通過。
-      if (verdict !== "pass" && !deferredToFinal) { lastFindings = [...(review.findings ?? []), review.summary]; await record("reviewer", reviewerModel.model, signal(review.findings, review.summary)); if (!advance()) return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source, undefined, stallReason, decisionLog, verification); continue; }
+      if (verdict !== "pass" && !deferredToFinal) { lastFindings = [...(review.findings ?? []), review.summary]; await record("reviewer", reviewerModel.model, signal(review.findings, review.summary)); if (!advance()) return this.finish(root, "needs_human", runId, effective.tier, cycle, maxImplementationAttempts, effective, cost, startedAt, source, undefined, stallReason, decisionLog, verification); continue; }
       if (effective.tier === 2) {
         const finalModel = modelFor(effective.tier, "final_reviewer");
         const final = await this.deps.agents.run({ role: "final_reviewer", taskId: runId, cwd: repo, sessionDir: join(root, `cycle-${cycle}-final`), model: finalModel, prompt: "Perform the final, read-only release review. Verify requirement coverage and risk.", artifacts });
         await ledger(root, `cycle-${cycle}-final.json`, final); charge("final_reviewer", costOf(final.usage)); verification = { ...verification, finalReviewerVerdict: final.verdict ?? "fail" };
         const finalGap = specGap(final.verdict, final.findings);
-        if (finalGap) { await record("final_reviewer", finalModel.model, [finalGap.semantic, ...finalGap.candidates]); onProgress(`Final reviewer reports an undefined product semantic; returning to discussion without consuming a cycle.`); return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source, finalGap, undefined, decisionLog, verification); }
-        if ((final.verdict ?? "fail") !== "pass") { lastFindings = [...(final.findings ?? []), final.summary]; await record("final_reviewer", finalModel.model, signal(final.findings, final.summary)); if (!advance()) return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source, undefined, stallReason, decisionLog, verification); continue; }
+        if (finalGap) { await record("final_reviewer", finalModel.model, [finalGap.semantic, ...finalGap.candidates]); onProgress(`Final reviewer reports an undefined product semantic; returning to discussion without consuming a cycle.`); return this.finish(root, "needs_human", runId, effective.tier, cycle, maxImplementationAttempts, effective, cost, startedAt, source, finalGap, undefined, decisionLog, verification); }
+        if ((final.verdict ?? "fail") !== "pass") { lastFindings = [...(final.findings ?? []), final.summary]; await record("final_reviewer", finalModel.model, signal(final.findings, final.summary)); if (!advance()) return this.finish(root, "needs_human", runId, effective.tier, cycle, maxImplementationAttempts, effective, cost, startedAt, source, undefined, stallReason, decisionLog, verification); continue; }
       }
-      return this.finish(root, "ready_for_main", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source, undefined, undefined, decisionLog, verification);
+      return this.finish(root, "ready_for_main", runId, effective.tier, cycle, maxImplementationAttempts, effective, cost, startedAt, source, undefined, undefined, decisionLog, verification);
     }
     } catch (thrown) {
       // Runtime exception 以前直接往外拋，結果是整個 run 沒有 summary、沒有成本歸戶、
@@ -168,10 +197,10 @@ export class Orchestrator {
       // 這裡把它落地成 `failed`，保留已累積的成本與錯誤訊息（含子程序 stderr）。
       const message = thrown instanceof Error ? thrown.message : String(thrown);
       onProgress(`Run failed: ${message.slice(0, 300)}`);
-      await this.finish(root, "failed", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source, undefined, message, decisionLog, verification);
+      await this.finish(root, "failed", runId, effective.tier, cycle, maxImplementationAttempts, effective, cost, startedAt, source, undefined, message, decisionLog, verification);
       throw thrown;
     }
-    return this.finish(root, "needs_human", runId, effective.tier, cycle, maxCyclesFor(maxFixCycles), effective, cost, startedAt, source, undefined, stallReason, decisionLog, verification);
+    return this.finish(root, "needs_human", runId, effective.tier, cycle, maxImplementationAttempts, effective, cost, startedAt, source, undefined, stallReason, decisionLog, verification);
   }
   private async finish(root: string, status: RunOutcome["status"], runId: string, tier: Tier, cycles: number, maxCycles: number, routing: RoutingResult, cost: RunCost, startedAt: Date, source: RunSource, gap?: SpecGap, error?: string, decisionLog: DecisionLog = EMPTY_DECISION_LOG, verification: RunVerification = { tests: [], reviewerVerdict: "not_run", finalReviewerVerdict: "not_run" }): Promise<RunOutcome> {
     const durationMs = Math.max(0, (this.deps.now?.() ?? new Date()).getTime() - startedAt.getTime());
@@ -193,6 +222,21 @@ export class Orchestrator {
     });
     return outcome;
   }
+}
+
+/** Resolve the one canonical cycle policy at the core boundary. */
+export function resolveMaxImplementationAttempts(config?: RepoConfig): number {
+  const maxCycles = config?.maxCycles;
+  const legacyRetries = config?.maxFixCycles;
+  if (maxCycles !== undefined && legacyRetries !== undefined) {
+    throw new Error("maxCycles and deprecated maxFixCycles cannot both be configured");
+  }
+  if (maxCycles !== undefined) {
+    if (!Number.isInteger(maxCycles) || maxCycles < 1) throw new Error("maxCycles must be a positive integer");
+    return maxCycles;
+  }
+  if (legacyRetries !== undefined) return maxImplementationAttemptsForLegacyRetries(legacyRetries);
+  return DEFAULT_MAX_IMPLEMENTATION_ATTEMPTS;
 }
 /** 預檢用的測試命令：只取與 tier 無關的基礎命令，因為此時尚未決定 tier。 */
 export function preflightTestCommands(handoff: Handoff, config: RepoConfig | undefined): string[] {
@@ -239,6 +283,12 @@ export async function excludeLedger(repo: string): Promise<void> {
 export function formatTests(results: TestResult[]): string {
   if (results.length === 0) return "NO DETERMINISTIC TESTS CONFIGURED";
   return results.map((result) => `${result.passed ? "PASS" : "FAIL"} ${result.command}\n${result.output}`).join("\n");
+}
+function publicEvidenceFindings(evidence: PublicEvidenceArtifact): string {
+  return evidence.checks
+    .filter((check) => check.status !== "passed")
+    .map((check) => `public check ${check.id}: ${check.status}; failureKind=${check.failureKind}; mode=${check.mode}; required=${check.required}; exitCode=${check.exitCode}; timedOut=${check.timedOut}; diagnostics=${check.diagnostics.map((diagnostic) => `${diagnostic.id}=${diagnostic.matchCount}`).join(",") || "none"}; evidence=${check.evidenceRef}`)
+    .join("\n");
 }
 async function repoRules(repo: string): Promise<string> { try { return await readFile(join(repo, "CLAUDE.md"), "utf8"); } catch { return ""; } }
 /**

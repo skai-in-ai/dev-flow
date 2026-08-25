@@ -1,0 +1,50 @@
+{
+  "schemaVersion": "task-compatibility-1",
+  "taskId": "terminal-bench@2.0/overfull-hbox",
+  "taskName": "overfull-hbox",
+  "datasetRef": "terminal-bench@2.0",
+  "datasetRevision": "2.0",
+  "taskRef": "overfull-hbox",
+  "taskDigest": "2c20a07c54acefbe303074ef5a99e915fd8b86eecc3d232c248c6927b1dfa5d8",
+  "workspaceKind": "git-repo",
+  "requiresGitRepo": true,
+  "requiresCleanTree": true,
+  "agentWorkdir": "/app",
+  "testsVisibleToAgent": true,
+  "verifierMode": "shared",
+  "internetAllowed": true,
+  "fullDevFlowCompatible": true,
+  "allowLocalCommit": false,
+  "incompatibilityReasons": [],
+  "deterministicTests": [
+    "test -f input.tex && test -f main.tex && test -f synonyms.txt && test -x \"$(command -v pdflatex)\" && test \"$(git rev-parse --show-toplevel)\" = /app"
+  ],
+  "scopeInclude": ["input.tex"],
+  "scopeExclude": [],
+  "acceptanceCriteria": [
+    "The unchanged external Harbor verifier passes and the document has no overfull hbox warnings.",
+    "Only input.tex is edited; main.tex and synonyms.txt remain byte-for-byte unchanged."
+  ],
+  "riskNotes": [
+    "The derivative changes only environment/Dockerfile to install git and create the clean /app baseline.",
+    "The task verifier may reinstall TeX and install Python tooling; that is outside the deterministic infrastructure test.",
+    "allowLocalCommit is false because comparison review evidence is working-tree based."
+  ],
+  "artifactRoot": "/logs/artifacts",
+  "agentLogDir": "/logs/agent/full-dev-flow",
+  "maxTier": 1,
+  "model": "gpt-5.6-luna",
+  "reasoningEffort": "medium",
+  "timeoutSeconds": 900,
+  "trialCount": 1,
+  "configStatus": "prepared-no-trial",
+  "sourceProvenance": {
+    "sourceRoot": "/private/tmp/terminal-bench-2.0-full/terminal-bench/overfull-hbox",
+    "sourceRevision": "terminal-bench@2.0 (local extracted source; upstream commit not present)",
+    "sourceCanonicalSha256": "5f4aa8942d060bfa21521a47b22245ea3a838f32fc29b0f4b87de63f08a1ea6e",
+    "derivativeRoot": "/private/tmp/terminal-bench-formal/overfull-hbox",
+    "derivativeCanonicalSha256": "2c20a07c54acefbe303074ef5a99e915fd8b86eecc3d232c248c6927b1dfa5d8",
+    "canonicalDigestRule": "sorted relative path + TAB + file SHA-256 + LF over all files",
+    "preservedByteForByte": ["instruction.md", "tests/test.sh", "tests/test_outputs.py", "solution/solve.sh", "task.toml", "tests/input.tex", "tests/main.tex", "tests/synonyms.txt", "environment/tests/input.tex", "environment/tests/main.tex", "environment/tests/synonyms.txt", "environment/tests/test_outputs.py"]
+  }
+}

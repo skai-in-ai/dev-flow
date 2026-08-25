@@ -84,6 +84,7 @@ approved spec / handoff
   → deterministic risk floor + Luna classifier
   → isolated implementation
   → actual diff reclassification
+  → public build-output evidence (optional)
   → deterministic tests
   → isolated review
   → fix / escalate / needs_spec
@@ -95,7 +96,8 @@ approved spec / handoff
 - 每個 role 使用新的 Pi session，reviewer 不共享 implementer 對話。
 - `decisions.json` 保存跨 cycle findings 與 implementer responses。
 - 測試結果由 shell exit code 決定，不由模型宣告。
-- 最多三次修正、四次實作；相同失敗重複時提前熔斷。
+- `RepoConfig.publicChecks` 可宣告不使用 shell 的公開 argv checks；系統在 baseline 與每個 cycle 後產生 bounded、sanitized 的 `build-evidence-1`，供 reviewer 參考。baseline 的正常 task failure 只記錄，execution failure 才 fail closed；`observe` 不改完成判斷，cycle `blocking` task failure 才進下一輪。
+- 預設 `maxCycles=4`（包含第一次 implementation），可用 `--max-cycles N` 設定；相同失敗重複時提前熔斷。
 - 預設 `max-tier 1`；Tier 2 才使用 Terra reviewer 與 Sol final review。
 - 每次 run 在 `.orchestrator/runs/` 保存 diff、tests、routing、cost 與 `report.md`。
 
@@ -168,6 +170,7 @@ GitHub **Dev-flow task** template 會從 `status: draft` 開始；填完 require
 
 - Implementer 有 read/write/edit/bash；reviewer 只有 read/grep/find/ls。這是工具 allowlist，不是 OS sandbox。
 - Approved spec 的 test commands 會由 shell 執行；approval 不是 sandbox，只能接受受信任來源。
+- Public build evidence checks 使用直接 argv spawn、repo-relative cwd、timeout、輸出上限與受限 literal/regex diagnostics；不讀 hidden verifier、不輸出 auth/prompt/session/secret，也不是 OS sandbox。Harbor external verifier 仍是 benchmark acceptance。
 - `scope.include/exclude` 是 prompt/review contract，沒有 deterministic path enforcement。
 - GitHub queue 以 repository allowlist、workspace containment、origin match、remote SHA 與 atomic claim 保護 worktree 建立。
 - Resume claim 成功後、任何 agent 呼叫前，worker 會補 fetch 本機缺少的 claimed SHA，並以暫存 Git index 比對 retained worktree（包含未 commit 變更）與 default branch；只在可合併時繼續，衝突或過長授權決策會停在 needs-human，不會修改 retained worktree。

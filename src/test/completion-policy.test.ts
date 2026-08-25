@@ -22,6 +22,14 @@ test("zero fix cycles means a single unretried implementation", () => {
   assert.equal(nextCycle({ cycle: 1, maxFixCycles: 0 }).action, "give_up");
 });
 
+test("canonical maxImplementationAttempts includes the first implementation", () => {
+  assert.equal(nextCycle({ cycle: 1, maxImplementationAttempts: 1 }).action, "give_up");
+  assert.equal(nextCycle({ cycle: 1, maxImplementationAttempts: 3 }).action, "retry");
+  assert.equal(nextCycle({ cycle: 3, maxImplementationAttempts: 3 }).action, "give_up");
+  assert.throws(() => nextCycle({ cycle: 1, maxImplementationAttempts: 0 }), /positive integer/);
+  assert.throws(() => nextCycle({ cycle: 1, maxImplementationAttempts: 3, maxFixCycles: 2 }), /cannot both/);
+});
+
 test("rejects a negative or non-integer limit", () => {
   assert.throws(() => nextCycle({ cycle: 1, maxFixCycles: -1 }), /maxFixCycles must be a non-negative integer/);
   assert.throws(() => nextCycle({ cycle: 1, maxFixCycles: 1.5 }), /maxFixCycles must be a non-negative integer/);

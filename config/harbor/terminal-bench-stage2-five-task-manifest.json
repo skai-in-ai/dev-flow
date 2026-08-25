@@ -1,0 +1,176 @@
+{
+  "schemaVersion": "benchmark-run-manifest-1",
+  "artifactRoot": {
+    "env": "HARBOR_BENCHMARK_ARTIFACT_ROOT"
+  },
+  "artifacts": [
+    {
+      "path": "harbor-first-formal-comparison/prove-plus-comm-codex-formal-1/prove-plus-comm__3Sx5V2F",
+      "includeInComparison": true,
+      "failureCategory": null,
+      "invalidReason": null,
+      "estimatedCostUsd": 0.00941708,
+      "actualCostUsd": null
+    },
+    {
+      "path": "harbor-first-formal-comparison/prove-plus-comm-single-pi-formal-3/prove-plus-comm__Tp7Zrnn",
+      "includeInComparison": true,
+      "failureCategory": null,
+      "invalidReason": null,
+      "estimatedCostUsd": 0.0190884,
+      "actualCostUsd": null
+    },
+    {
+      "path": "harbor-first-formal-comparison/prove-plus-comm-full-dev-flow-formal-3/prove-plus-comm__4gt5JxD",
+      "includeInComparison": true,
+      "failureCategory": null,
+      "invalidReason": null,
+      "estimatedCostUsd": 0.01691,
+      "actualCostUsd": null
+    },
+    {
+      "path": "harbor-five-task-formal/stage2-overfull-hbox-codex/overfull-hbox__jKWxb89",
+      "includeInComparison": true,
+      "failureCategory": null,
+      "invalidReason": null,
+      "estimatedCostUsd": 0.02846932,
+      "actualCostUsd": null
+    },
+    {
+      "path": "harbor-five-task-formal/stage2-overfull-hbox-single-pi-formal-3/overfull-hbox__GouwQoe",
+      "includeInComparison": true,
+      "failureCategory": null,
+      "invalidReason": null,
+      "estimatedCostUsd": 0.1256732,
+      "actualCostUsd": null
+    },
+    {
+      "path": "harbor-five-task-formal/stage2-overfull-hbox-full-dev-flow/overfull-hbox__2ntUppL",
+      "includeInComparison": true,
+      "failureCategory": null,
+      "invalidReason": null,
+      "estimatedCostUsd": 0.0600716,
+      "actualCostUsd": null
+    },
+    {
+      "path": "harbor-five-task-formal/stage2-regex-log-codex/regex-log__H4Ut3BK",
+      "includeInComparison": true,
+      "failureCategory": null,
+      "invalidReason": null,
+      "estimatedCostUsd": 0.00873144,
+      "actualCostUsd": null
+    },
+    {
+      "path": "harbor-five-task-formal/stage2-regex-log-single-pi/regex-log__wGjW29r",
+      "includeInComparison": true,
+      "failureCategory": null,
+      "invalidReason": null,
+      "estimatedCostUsd": 0.0569244,
+      "actualCostUsd": null
+    },
+    {
+      "path": "harbor-five-task-formal/stage2-regex-log-full-dev-flow/regex-log__H6s5XDw",
+      "includeInComparison": true,
+      "failureCategory": null,
+      "invalidReason": null,
+      "estimatedCostUsd": 0.0391438,
+      "actualCostUsd": null
+    },
+    {
+      "path": "harbor-five-task-formal/stage2-log-summary-date-ranges-codex/log-summary-date-ranges__93nvzcm",
+      "includeInComparison": true,
+      "failureCategory": null,
+      "invalidReason": null,
+      "estimatedCostUsd": 0.0080102,
+      "actualCostUsd": null
+    },
+    {
+      "path": "harbor-five-task-formal/stage2-log-summary-date-ranges-single-pi/log-summary-date-ranges__Y4YbwpP",
+      "includeInComparison": true,
+      "failureCategory": null,
+      "invalidReason": null,
+      "estimatedCostUsd": 0.0264988,
+      "actualCostUsd": null
+    },
+    {
+      "path": "harbor-five-task-formal/stage2-log-summary-date-ranges-full-dev-flow/log-summary-date-ranges__UnX2i6c",
+      "includeInComparison": true,
+      "failureCategory": null,
+      "invalidReason": null,
+      "estimatedCostUsd": 0.020393,
+      "actualCostUsd": null
+    },
+    {
+      "path": "harbor-five-task-formal/stage2-polyglot-c-py-codex/polyglot-c-py__zYrw8SG",
+      "includeInComparison": true,
+      "failureCategory": null,
+      "invalidReason": null,
+      "estimatedCostUsd": 0.0071346,
+      "actualCostUsd": null
+    },
+    {
+      "path": "harbor-five-task-formal/stage2-polyglot-c-py-single-pi/polyglot-c-py__BLX9o3Z",
+      "includeInComparison": true,
+      "failureCategory": null,
+      "invalidReason": null,
+      "estimatedCostUsd": 0.0626004,
+      "actualCostUsd": null
+    },
+    {
+      "path": "harbor-five-task-formal/stage2-polyglot-c-py-full-dev-flow/polyglot-c-py__7HBkYwy",
+      "includeInComparison": true,
+      "failureCategory": null,
+      "invalidReason": null,
+      "estimatedCostUsd": 0.01573,
+      "actualCostUsd": null
+    },
+    {
+      "path": "harbor-five-task-formal/stage2-overfull-hbox-single-pi/overfull-hbox__MNwardv",
+      "includeInComparison": false,
+      "failureCategory": "infrastructure-invalid",
+      "invalidReason": "container cwd /workspace did not exist; agent process failed before model execution",
+      "estimatedCostUsd": null,
+      "actualCostUsd": null
+    },
+    {
+      "path": "harbor-five-task-formal/stage2-overfull-hbox-single-pi-formal-2/overfull-hbox__QBMaCB7",
+      "includeInComparison": false,
+      "failureCategory": "infrastructure-invalid",
+      "invalidReason": "Pi OAuth refresh_token_reused (401) before model tokens; no valid verifier result",
+      "estimatedCostUsd": null,
+      "actualCostUsd": null
+    },
+    {
+      "path": "harbor-first-formal-comparison/prove-plus-comm-single-pi-formal-1/prove-plus-comm__8UGerpB",
+      "includeInComparison": false,
+      "failureCategory": "infrastructure-invalid",
+      "invalidReason": "post-run cleanup incorrectly treated the controlled auth directory as failed credential cleanup",
+      "estimatedCostUsd": null,
+      "actualCostUsd": null
+    },
+    {
+      "path": "harbor-first-formal-comparison/prove-plus-comm-single-pi-formal-2/prove-plus-comm__fGVh3gq",
+      "includeInComparison": false,
+      "failureCategory": "infrastructure-invalid",
+      "invalidReason": "Docker/TLS infrastructure failure before a valid verifier result",
+      "estimatedCostUsd": null,
+      "actualCostUsd": null
+    },
+    {
+      "path": "harbor-first-formal-comparison/prove-plus-comm-full-dev-flow-formal-1/prove-plus-comm__szf4e29",
+      "includeInComparison": false,
+      "failureCategory": "infrastructure-invalid",
+      "invalidReason": "bridge did not source NVM and node exited 127 before the model run",
+      "estimatedCostUsd": null,
+      "actualCostUsd": null
+    },
+    {
+      "path": "harbor-first-formal-comparison/prove-plus-comm-full-dev-flow-formal-2/prove-plus-comm__W5bC7Ww",
+      "includeInComparison": false,
+      "failureCategory": "configuration-invalid",
+      "invalidReason": "deterministic test incorrectly required a clean Git tree after the agent changed the proof",
+      "estimatedCostUsd": null,
+      "actualCostUsd": null
+    }
+  ]
+}

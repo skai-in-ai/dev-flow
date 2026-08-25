@@ -75,3 +75,14 @@ Adapter 逐行解析 Pi JSONL，取最後一個 assistant `message_end` 的 text
 ## Context isolation
 
 不同 role 永遠不重用 Pi session。Reviewer prompt 由 orchestrator 重新組合 immutable artifacts，不包含 implementer 的完整 conversation。這提供上下文隔離；它不是作業系統層的 sandbox，implementer 仍可在其工具權限與本機帳號權限內操作檔案。
+
+## Benchmark telemetry boundary
+
+Harbor foundation 的 normalizer 只把 Pi JSON usage 映射成跨 harness contract：`input`／`output`／`cacheRead`／`cacheWrite` 對應 raw token 欄位；缺少資料一律為 `null`。`sessionMode: fresh` 不代表 cache hit，`uncachedInputTokens` 也不會在 raw 欄位缺失時靜默補成 0；若由 `inputTokens - cacheReadTokens` 推導，會在 `derived` 保存公式。這一層不改 Pi adapter 的 process、session 或 ledger 行為。
+
+Usage precedence 固定為 final totals > trajectory metrics > step metrics，避免單一 step 覆寫 final totals。generic `cost` 不會被當成 estimated cost；只有明確 pricing snapshot 才能填 `estimatedCostUsd`，只有 billing evidence 才能填 `actualCostUsd`。
+
+Harbor Full dev-flow wrapper 會在 container setup 階段依 Harbor Pi 的 pinned 安裝策略
+取得 nvm `v0.40.2`、Node major `22` 與 Pi `0.82.1`，再由內嵌的 JS bridge 呼叫同一個
+既有 core runner。這不是第二個 Pi adapter；wrapper 只負責 handoff、runtime
+preflight 與 artifact export，並不改 Pi process/session/tool policy。
