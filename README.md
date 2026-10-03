@@ -174,6 +174,7 @@ The GitHub **Dev-flow task** template starts with `status: draft`. Complete all 
 
 ## Security boundaries
 
+- Before listing or claiming Issues, the worker checks local Pi OAuth credentials without refreshing tokens or calling a model. Unavailable credentials return `blocked/auth_required` without GitHub mutations. Offline dry-runs skip this check; local readiness cannot prove remote token validity.
 - The implementer gets read/write/edit/bash tools; reviewers get read/grep/find/ls only. This is a tool allowlist, not an OS sandbox.
 - Test commands in an approved spec are executed by a shell. Approval is not sandboxing, so specs must come from trusted sources.
 - Public build evidence checks use direct argv spawning, repository-relative working directories, timeouts, output caps, and constrained literal/regex diagnostics. They do not read hidden verifier output or publish auth, prompts, sessions, or secrets; they are not an OS sandbox. The external Harbor verifier remains the benchmark acceptance boundary.

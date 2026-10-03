@@ -81,6 +81,8 @@ Poll 也會檢查 allowlist 內 open 且帶 `dev-flow-running` 的 Issue。worke
 
 Worker 只選 open 且帶 `dev-flow-ready` 或 `dev-flow-resume` 的 Issue，每次 poll 最多處理一個。不合法 Issue 會標記 needs-human，不會永久卡住後面的 queue。
 
+每次列出 queue 前，Mac worker 會以 Pi 官方 `auth.json` 的唯讀 credential storage 形狀檢查 `openai-codex` OAuth record。缺少、格式錯誤，或 access 已過期且沒有 canonical refresh credential 時，worker 回傳 `worker blocked/auth_required`，不會列 Issue、claim、加 label、留言或呼叫模型。access 過期但 refresh credential 存在時不會預先刷新，交由 Pi 正常 runtime flow 處理；這項本機檢查不能證明 refresh token 尚未被遠端撤銷，之後的 runtime OAuth 401 仍須照既有錯誤流程處理。檢查不輸出 token，也不執行 API-key command。
+
 ## 新 repository onboarding
 
 在建立第一張 Issue **前**，本機 operator 必須明示執行：

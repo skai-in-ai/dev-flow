@@ -161,6 +161,7 @@ GitHub **Dev-flow task** template 會從 `status: draft` 開始；填完 require
 
 ## 安全邊界
 
+- Worker 在列出或 claim Issue 前唯讀檢查本機 Pi OAuth 憑證，不刷新 token、不呼叫模型；憑證不可用時回傳 `blocked/auth_required`，不寫入 GitHub。離線 dry-run 跳過此檢查，本機就緒不保證遠端 token 仍有效。
 - Implementer 有 read/write/edit/bash；reviewer 只有 read/grep/find/ls。這是工具 allowlist，不是 OS sandbox。
 - Approved spec 的 test commands 會由 shell 執行；approval 不是 sandbox，只能接受受信任來源。
 - `scope.include/exclude` 是 prompt/review contract，沒有 deterministic path enforcement。

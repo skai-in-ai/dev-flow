@@ -14,6 +14,7 @@ import type { ModelClassifier } from "./routing.js";
 import { costOf } from "./orchestrator.js";
 import { specToHandoff, parseSpec, assertExecutableTestCommands, type TaskSpec } from "./spec.js";
 import type { Tier } from "./agents/contracts.js";
+import { checkPiAuthReadiness, type PiAuthPreflight, type PiAuthReadiness } from "./pi-auth-preflight.js";
 
 const execFileAsync = promisify(execFile);
 export const DEV_FLOW_LABELS = [
@@ -211,7 +212,7 @@ export class GhCliAdapter implements GitHubAdapter {
   }
 }
 
-export interface QueueConfig { allowedRepos: readonly string[]; workspaceRoot: string; ledgerRoot: string; maxTier: Tier; dryRun: boolean; workerId: string; runningTimeoutMs?: number; }
+export interface QueueConfig { allowedRepos: readonly string[]; workspaceRoot: string; ledgerRoot: string; maxTier: Tier; dryRun: boolean; workerId: string; runningTimeoutMs?: number; authPreflight?: PiAuthPreflight; }
 const allowedWorkspaceRoot = resolve("/Users/skai.wu/side");
 const defaultRunningTimeoutMs = 4 * 60 * 60 * 1000;
 export function queueConfig(env: NodeJS.ProcessEnv = process.env): QueueConfig {
@@ -226,7 +227,8 @@ export function queueConfig(env: NodeJS.ProcessEnv = process.env): QueueConfig {
   const rawRunningTimeout = env.DEV_FLOW_RUNNING_TIMEOUT_HOURS;
   const runningTimeoutHours = rawRunningTimeout === undefined ? 4 : Number(rawRunningTimeout);
   const runningTimeoutMs = Number.isFinite(runningTimeoutHours) && runningTimeoutHours > 0 ? runningTimeoutHours * 60 * 60 * 1000 : defaultRunningTimeoutMs;
-  return { allowedRepos, workspaceRoot: root, ledgerRoot, maxTier: Number(rawTier) as Tier, dryRun: env.DEV_FLOW_DRY_RUN === "1", workerId: env.DEV_FLOW_WORKER_ID ?? `${process.pid}-${randomUUID().slice(0, 8)}`, runningTimeoutMs };
+  const dryRun = env.DEV_FLOW_DRY_RUN === "1";
+  return { allowedRepos, workspaceRoot: root, ledgerRoot, maxTier: Number(rawTier) as Tier, dryRun, workerId: env.DEV_FLOW_WORKER_ID ?? `${process.pid}-${randomUUID().slice(0, 8)}`, runningTimeoutMs, ...(dryRun ? {} : { authPreflight: () => checkPiAuthReadiness({ env }) }) };
 }
 
 function section(body: string, heading: string): string {
@@ -749,7 +751,16 @@ export async function postNeedsHumanReport(
   }
 }
 
-export async function pollOnce(adapter: GitHubAdapter, config: QueueConfig): Promise<{ status: "idle" | "dry_run" | "success" | "failed"; issue?: QueueIssue; error?: string }> {
+export async function pollOnce(adapter: GitHubAdapter, config: QueueConfig): Promise<{ status: "idle" | "dry_run" | "success" | "failed" | "blocked"; issue?: QueueIssue; error?: string }> {
+  if (!config.dryRun && config.authPreflight) {
+    let readiness: PiAuthReadiness;
+    try {
+      readiness = await config.authPreflight();
+    } catch {
+      return { status: "blocked", error: "worker blocked/auth_required: Pi 尚未登入或憑證不可用，請執行 /login。local readiness check failed" };
+    }
+    if (readiness.status === "blocked") return { status: "blocked", error: `worker blocked/auth_required: Pi 尚未登入或憑證不可用，請執行 /login。${readiness.detail}` };
+  }
   await mkdir(config.ledgerRoot, { recursive: true });
   const lockPath = join(config.workspaceRoot, ".orchestrator", "queue-poll.lock");
   await mkdir(dirname(lockPath), { recursive: true });

@@ -22,3 +22,4 @@ if (dryRun) {
 const result = await pollOnce(adapter, config);
 console.log(JSON.stringify(result, null, 2));
 if (result.status === "failed") process.exitCode = 1;
+if (result.status === "blocked") process.exitCode = 2;

@@ -2,6 +2,8 @@
 
 本文件列出目前可驗證行為、部署檢查與安全邊界。
 
+Worker 的 Pi 登入前置檢查必須在 Issue listing、claim 與 GitHub 寫入前完成。測試以假的 OAuth record 驗證缺少、損壞、到期與 refresh 存在的情況；不得刷新 token、呼叫模型或輸出憑證。離線 dry-run 不要求登入，本機檢查不能保證遠端 OAuth 有效性。
+
 ## 本專案驗證
 
 ```bash
